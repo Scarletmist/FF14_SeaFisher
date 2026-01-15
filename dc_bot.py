@@ -11,8 +11,12 @@ import os
 from typing import Dict, Optional
 from fish_notice import get_bait
 import signal
+import logging
 
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("dc_bot")
+
+TOKEN = "MTQ2MDk2MTYyNzY2NjEyMDg2OQ.GBHMBa.CTA1BSlbqjWSuFGvFeGtpfawTVUP_ssZCJBeq8"  #os.getenv("DISCORD_BOT_TOKEN")
 PORT = int(os.environ.get("PORT", 10000))  # Render 會提供 PORT
 CHANNELS_FILE = Path("channels.json")
 TIMEZONE = ZoneInfo("Asia/Taipei")
@@ -173,43 +177,71 @@ class AnnounceCog(commands.Cog):
 # ---------- 啟動 ----------
 bot = AnnounceBot(command_prefix="!")
 
-async def main():
-    loop = asyncio.get_running_loop()
+@bot.event
+async def on_ready():
+    logger.info(f"Bot logged in as {bot.user} (id={bot.user.id})")
 
-    # 當接收到系統訊號時，建立一個任務去關閉 bot
-    def _on_exit():
-        # create_task 可以在 signal handler 裡安全呼叫
-        asyncio.create_task(shutdown())
-
-    for s in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(s, _on_exit)
-
-    # 直接啟動 bot，當 bot 被 close() 後這裡會返回
-    await bot.start(TOKEN)
-    await start_http_server()
-
-async def shutdown():
-    print("收到關機訊號，嘗試關閉 bot...")
-    # 若你有其他 cleanup（例如關 DB 連線），也放這裡
-    try:
-        await bot.close()
-    except Exception as e:
-        print("關閉 bot 時發生錯誤：", e)
-
+# 以下為 HTTP server（簡單 health check）
 async def handle_ok(request):
     return web.Response(text="OK")
 
-async def start_http_server():
+async def start_http_server(port: int):
     app = web.Application()
-    app.add_routes([web.get("/", handle_ok)])
+    app.add_routes([web.get("/", handle_ok), web.get("/health", handle_ok)])
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    print(f"HTTP server listening on 0.0.0.0:{PORT}")
+    logger.info(f"HTTP server listening on 0.0.0.0:{port}")
+    return runner
+
+# 主流程：啟動 http server 與 discord bot 並處理 shutdown
+async def main():
+    loop = asyncio.get_running_loop()
+    shutdown_event = asyncio.Event()
+
+    # Unix: 把 SIGINT/SIGTERM 與 event 連結
+    for s in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(s, shutdown_event.set)
+        except NotImplementedError:
+            # Windows 或不支援 signal handler 的環境
+            pass
+
+    # 啟動 HTTP server（滿足 Render 的 port scan）
+    runner = await start_http_server(PORT)
+
+    # 啟動 discord bot（在 background task）
+    bot_task = asyncio.create_task(bot.start(TOKEN))
+
+    # 等待關機事件
+    await shutdown_event.wait()
+    logger.info("Shutdown signal received — beginning graceful shutdown...")
+
+    # 先關閉 discord bot
+    try:
+        await bot.close()
+        logger.info("Discord bot closed.")
+    except Exception as e:
+        logger.exception("Error closing bot: %s", e)
+
+    # 再關掉 HTTP server
+    try:
+        await runner.cleanup()
+        logger.info("HTTP runner cleaned up.")
+    except Exception as e:
+        logger.exception("Error cleaning up HTTP runner: %s", e)
+
+    # 等待 bot_task 結束（若尚未）
+    try:
+        await asyncio.wait_for(bot_task, timeout=10)
+    except asyncio.TimeoutError:
+        logger.warning("Bot task did not finish within timeout after close().")
+    except Exception:
+        logger.exception("bot_task raised exception after close()")
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except Exception as e:
-        print("主程式例外：", e)
+    except Exception:
+        logger.exception("Fatal error in main loop")
