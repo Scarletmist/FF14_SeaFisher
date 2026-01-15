@@ -2,6 +2,7 @@
 import discord
 from discord.ext import commands
 import asyncio
+from aiohttp import web
 import json
 from pathlib import Path
 from datetime import datetime, timedelta, time
@@ -12,6 +13,7 @@ from fish_notice import get_bait
 import signal
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+PORT = int(os.environ.get("PORT", 10000))  # Render 會提供 PORT
 CHANNELS_FILE = Path("channels.json")
 TIMEZONE = ZoneInfo("Asia/Taipei")
 SCHEDULE_HOURS = list(range(1, 24, 2))
@@ -184,6 +186,7 @@ async def main():
 
     # 直接啟動 bot，當 bot 被 close() 後這裡會返回
     await bot.start(TOKEN)
+    await start_http_server()
 
 async def shutdown():
     print("收到關機訊號，嘗試關閉 bot...")
@@ -192,6 +195,18 @@ async def shutdown():
         await bot.close()
     except Exception as e:
         print("關閉 bot 時發生錯誤：", e)
+
+async def handle_ok(request):
+    return web.Response(text="OK")
+
+async def start_http_server():
+    app = web.Application()
+    app.add_routes([web.get("/", handle_ok)])
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    print(f"HTTP server listening on 0.0.0.0:{PORT}")
 
 if __name__ == "__main__":
     try:
