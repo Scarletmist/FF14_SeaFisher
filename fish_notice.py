@@ -104,7 +104,7 @@ OROLA_BAIT = {
 }
 
 TWO_HOURS = 2 * 60 * 60
-OFFSET = 88
+OFFSET = 132
 
 
 def next_even_hour_full(now=None, threshold_minute=30, include_equal=True):
