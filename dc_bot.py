@@ -12,10 +12,10 @@ from typing import Dict, Optional
 from fish_notice import get_bait
 import signal
 import logging
-import redis
+import redis.asyncio as aioredis
 
 REDIS_URL = os.environ["REDIS_URL"]  # 在 Render Web Service 的 env 設定
-r = redis.from_url(REDIS_URL, decode_responses=True)  # decode_responses 方便取回 str
+r = aioredis.from_url(REDIS_URL, decode_responses=True)  # decode_responses 方便取回 str
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dc_bot")
