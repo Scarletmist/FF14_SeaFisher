@@ -169,7 +169,7 @@ class AnnounceCog(commands.Cog):
             await channel.send(get_bait(datetime.now(tz=TIMEZONE)))
 
 # ---------- 啟動 ----------
-bot = commands.Bot(command_prefix="!")
+bot = AnnounceBot(command_prefix="!")
 
 async def main():
     loop = asyncio.get_running_loop()
