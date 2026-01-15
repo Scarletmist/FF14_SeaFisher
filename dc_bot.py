@@ -56,8 +56,8 @@ class AnnounceBot(commands.Bot):
             self.bg_task_started = True
 
     async def on_ready(self):
-        print(f"Logged in as {self.user} (id: {self.user.id})")
-        print("------")
+        logger.info(f"Logged in as {self.user} (id: {self.user.id})")
+        logger.info("------")
 
     # schedule loop 與其它函式照原本實作（略過，保留你原先的 _schedule_loop/_next_schedule_after/_send_announcement）
 
@@ -67,7 +67,7 @@ class AnnounceBot(commands.Bot):
             now = datetime.now(tz=TIMEZONE)
             next_run = self._next_schedule_after(now)
             wait_seconds = (next_run - now).total_seconds()
-            print(f"[Scheduler] now={now.isoformat()}, next={next_run.isoformat()}, wait={int(wait_seconds)}s")
+            logger.info(f"[Scheduler] now={now.isoformat()}, next={next_run.isoformat()}, wait={int(wait_seconds)}s")
             try:
                 await asyncio.sleep(wait_seconds)
             except asyncio.CancelledError:
@@ -103,11 +103,11 @@ class AnnounceBot(commands.Bot):
                 timestamp = run_time.astimezone(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
                 message = get_bait(datetime.now(tz=TIMEZONE))
                 await channel.send(message)
-                print(f"[Info] sent announcement to {channel_id}")
+                logger.info(f"[Info] sent announcement to {channel_id}")
             except discord.Forbidden:
                 guilds_to_remove.append(guild_id_str)
             except Exception as e:
-                print(f"[Error] sending to {channel_id}: {e}")
+                logger.warning(f"[Error] sending to {channel_id}: {e}")
         if guilds_to_remove:
             for gid in guilds_to_remove:
                 self.registered_channels.pop(gid, None)
@@ -176,10 +176,6 @@ class AnnounceCog(commands.Cog):
 
 # ---------- 啟動 ----------
 bot = AnnounceBot(command_prefix="!")
-
-@bot.event
-async def on_ready():
-    logger.info(f"Bot logged in as {bot.user} (id={bot.user.id})")
 
 # 以下為 HTTP server（簡單 health check）
 async def handle_ok(request):
