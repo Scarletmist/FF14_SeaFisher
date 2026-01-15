@@ -12,6 +12,10 @@ from typing import Dict, Optional
 from fish_notice import get_bait
 import signal
 import logging
+import redis
+
+REDIS_URL = os.environ["REDIS_URL"]  # 在 Render Web Service 的 env 設定
+r = redis.from_url(REDIS_URL, decode_responses=True)  # decode_responses 方便取回 str
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dc_bot")
@@ -23,15 +27,17 @@ TIMEZONE = ZoneInfo("Asia/Taipei")
 SCHEDULE_HOURS = list(range(1, 24, 2))
 SCHEDULE_MINUTE = 55
 
-def load_channels() -> Dict[str, int]:
-    if CHANNELS_FILE.exists():
-        with CHANNELS_FILE.open("r", encoding="utf-8") as f:
-            return json.load(f).get("guilds", {})
-    return {}
+async def load_channels() -> Dict[str, int]:
+    keys = await r.keys("channel:*")
+    channels = {}
+    for k in keys:
+        val = await r.get(k)
+        guild_id = k.split(":",1)[1]
+        channels[guild_id] = json.loads(val) if val else {}
+    return channels
 
-def save_channels(channels: Dict[str, int]):
-    with CHANNELS_FILE.open("w", encoding="utf-8") as f:
-        json.dump({"guilds": channels}, f, ensure_ascii=False, indent=2)
+async def save_channels(guild_id, data):
+    await r.set(f"channel:{guild_id}", json.dumps(data))
 
 class AnnounceBot(commands.Bot):
     def __init__(self, command_prefix: str = "!", **options):
@@ -111,7 +117,7 @@ class AnnounceBot(commands.Bot):
         if guilds_to_remove:
             for gid in guilds_to_remove:
                 self.registered_channels.pop(gid, None)
-            save_channels(self.registered_channels)
+                await save_channels(gid, None)
 
 
 # ----- 將命令放在 Cog 裡 -----
@@ -128,7 +134,7 @@ class AnnounceCog(commands.Cog):
         guild_id = str(ctx.guild.id)
         channel_id = ctx.channel.id
         self.bot.registered_channels[guild_id] = channel_id
-        save_channels(self.bot.registered_channels)
+        await save_channels(guild_id, channel_id)
         await ctx.send(f"已將此頻道 <#{channel_id}> 設為本伺服器的公告頻道。")
 
     @commands.command(
@@ -140,7 +146,7 @@ class AnnounceCog(commands.Cog):
         guild_id = str(ctx.guild.id)
         if guild_id in self.bot.registered_channels:
             del self.bot.registered_channels[guild_id]
-            save_channels(self.bot.registered_channels)
+            await save_channels(guild_id, None)
             await ctx.send("已取消本伺服器的公告頻道設定。")
         else:
             await ctx.send("本伺服器尚未設定公告頻道。")
