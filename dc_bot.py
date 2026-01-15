@@ -16,7 +16,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dc_bot")
 
-TOKEN = "MTQ2MDk2MTYyNzY2NjEyMDg2OQ.GBHMBa.CTA1BSlbqjWSuFGvFeGtpfawTVUP_ssZCJBeq8"  #os.getenv("DISCORD_BOT_TOKEN")
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 PORT = int(os.environ.get("PORT", 10000))  # Render 會提供 PORT
 CHANNELS_FILE = Path("channels.json")
 TIMEZONE = ZoneInfo("Asia/Taipei")
