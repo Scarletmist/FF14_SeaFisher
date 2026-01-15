@@ -68,36 +68,36 @@ OROLA_BAIT = {
     'OGB': {
         'D': {'BAIT': 'Ragworm', 'KING': False, 'MOOCH': False},
         'S': {'BAIT': 'Plump Worm', 'KING': False, 'MOOCH': False},
-        'N': {'BAIT': 'Glowworm', 'KING': True, 'MOOCH': False}
+        'N': {'BAIT': 'Glowworm', 'KING': True, 'MOOCH': False, 'COLOR': 'Red'}
     },
     'SSM': {
         'D': {'BAIT': 'Krill', 'KING': False, 'MOOCH': False},
         'S': {'BAIT': 'Ragworm', 'KING': False, 'MOOCH': True},
-        'N': {'BAIT': 'Shrimp Cage', 'KING': True, 'MOOCH': True}
+        'N': {'BAIT': 'Shrimp Cage', 'KING': True, 'MOOCH': True, 'COLOR': 'Red'}
     },
     'NSM': {
-        'D': {'BAIT': 'Heavy Steel Jig', 'KING': True, 'MOOCH': False},
+        'D': {'BAIT': 'Heavy Steel Jig', 'KING': True, 'MOOCH': False, 'COLOR': 'Red'},
         'S': {'BAIT': 'Krill', 'KING': False, 'MOOCH': False},
         'N': {'BAIT': 'Ragworm', 'KING': False, 'MOOCH': False}
     },
     'ORS': {
         'D': {'BAIT': 'Plump Worm', 'KING': False, 'MOOCH': False},
-        'S': {'BAIT': 'Rat Tail', 'KING': True, 'MOOCH': False},
+        'S': {'BAIT': 'Rat Tail', 'KING': True, 'MOOCH': False, 'COLOR': 'Red'},
         'N': {'BAIT': 'Ragworm', 'KING': False, 'MOOCH': False}
     },
     'CM': {
         'D': {'BAIT': 'Krill', 'KING': False, 'MOOCH': False},
         'S': {'BAIT': 'Plump Worm', 'KING': False, 'MOOCH': False},
-        'N': {'BAIT': 'Squid Strip', 'KING': True, 'MOOCH': False}
+        'N': {'BAIT': 'Squid Strip', 'KING': True, 'MOOCH': False, 'COLOR': 'Red'}
     },
     'OBS': {
-        'D': {'BAIT': 'Ragworm', 'KING': True, 'MOOCH': False, 'KING_BAIT': 'Pill Bug'},
+        'D': {'BAIT': 'Ragworm', 'KING': True, 'MOOCH': False, 'KING_BAIT': 'Pill Bug', 'COLOR': 'Green'},
         'S': {'BAIT': 'Plump Worm', 'KING': False, 'MOOCH': False},
         'N': {'BAIT': 'Plump Worm', 'KING': False, 'MOOCH': False}
     },
     'OTS': {
         'D': {'BAIT': 'Krill', 'KING': False, 'MOOCH': True},
-        'S': {'BAIT': 'Krill', 'KING': True, 'MOOCH': True},
+        'S': {'BAIT': 'Krill', 'KING': True, 'MOOCH': True, 'COLOR': 'Red'},
         'N': {'BAIT': 'Krill', 'KING': False, 'MOOCH': True}
     }
 }
@@ -155,7 +155,7 @@ def get_bait(rawDate: datetime=datetime.now()):
         messages.append(f'釣場 No.{i + 1}, 釣餌: [ {BAIT_CHT[spec_bait]} ], !!!{COLOR_CHT[SPEC_COLOR[area]]}色')
         messages.append(f'幻海釣餌: [ {BAIT_CHT[orola['BAIT']]} ]' + (', 以小釣大' if orola['MOOCH'] else ''))
         if orola['KING']:
-            messages.append(f'    !!!幻海海王!!!' + (f', 釣餌: [ {BAIT_CHT[orola["KING_BAIT"]]} ]' if "KING_BAIT" in orola else ''))
+            messages.append(f'    !!!幻海海王!!!' + (f', 釣餌: [ {BAIT_CHT[orola["KING_BAIT"]]} ]' if "KING_BAIT" in orola else '') + f'!!!{COLOR_CHT[orola["COLOR"]]}色')
         messages.append('=' * 20)
     
     return "\n".join(messages)
