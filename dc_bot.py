@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import os
 from typing import Dict, Optional
 from fish_notice import get_bait
+import signal
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 CHANNELS_FILE = Path("channels.json")
@@ -168,12 +169,32 @@ class AnnounceCog(commands.Cog):
             await channel.send(get_bait(datetime.now(tz=TIMEZONE)))
 
 # ---------- 啟動 ----------
-def main():
-    if TOKEN is None:
-        print("請先設定 DISCORD_BOT_TOKEN 環境變數")
-        return
-    bot = AnnounceBot(command_prefix="!")
-    bot.run(TOKEN)
+bot = commands.Bot(command_prefix="!")
+
+async def main():
+    loop = asyncio.get_running_loop()
+
+    # 當接收到系統訊號時，建立一個任務去關閉 bot
+    def _on_exit():
+        # create_task 可以在 signal handler 裡安全呼叫
+        asyncio.create_task(shutdown())
+
+    for s in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(s, _on_exit)
+
+    # 直接啟動 bot，當 bot 被 close() 後這裡會返回
+    await bot.start(TOKEN)
+
+async def shutdown():
+    print("收到關機訊號，嘗試關閉 bot...")
+    # 若你有其他 cleanup（例如關 DB 連線），也放這裡
+    try:
+        await bot.close()
+    except Exception as e:
+        print("關閉 bot 時發生錯誤：", e)
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print("主程式例外：", e)
