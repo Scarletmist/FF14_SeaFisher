@@ -105,6 +105,28 @@ OROLA_BAIT = {
 TWO_HOURS = 2 * 60 * 60
 OFFSET = 88
 
+
+def next_even_hour_full(now=None, threshold_minute=30, include_equal=True):
+    """
+    取得目標整點（偶數小時）。
+    參數:
+      now: datetime 或 None（None 時使用系統當前時間）
+      threshold_minute: 判斷門檻（預設30）
+      include_equal: 是否把等於 threshold_minute 視為 "已到門檻"（預設 True）
+    回傳: datetime（目標整點）
+    """
+    if now is None:
+        now = datetime.now()
+    minute = now.minute
+    cmp = (minute >= threshold_minute) if include_equal else (minute > threshold_minute)
+    if now.hour % 2 == 0:  # 偶數小時
+        delta_hours = 2 if cmp else 0
+    else:  # 奇數小時
+        delta_hours = 1
+    base = now.replace(minute=0, second=0, microsecond=0)
+    return base + timedelta(hours=delta_hours)
+
+
 def get_route(targetDate: datetime):
     first_date = datetime(1970, 1, 1)
     voyageNumber = math.floor((targetDate - first_date).total_seconds() / TWO_HOURS)
@@ -115,13 +137,15 @@ def get_route(targetDate: datetime):
     return route
 
 
-def get_bait(targetDate: datetime):
+def get_bait(rawDate: datetime=datetime.now()):
+    targetDate = next_even_hour_full(rawDate)
     fish_route_time = get_route(targetDate)
     route = fish_route_time[0]
     time = fish_route_time[1]
     time_index = TIME_LIST.index(time)
 
     messages = []
+    messages.append(f'航線時間: {targetDate.strftime("%Y/%m/%d %H:%M")}')
 
     for i in range(3):
         area = AREA_MAPPING[route][i]
