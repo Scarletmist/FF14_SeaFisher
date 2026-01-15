@@ -180,7 +180,7 @@ class AnnounceCog(commands.Cog):
             await channel.send(get_bait(datetime.now(tz=TIMEZONE)))
 
 # ---------- 啟動 ----------
-bot = AnnounceBot(command_prefix="!")
+bot = AnnounceBot(command_prefix="？")
 
 # 以下為 HTTP server（簡單 health check）
 async def handle_ok(request):
