@@ -156,7 +156,7 @@ def get_bait(rawDate: datetime=datetime.now()):
         messages.append(f'釣場 No.{i + 1}, 釣餌: [ {BAIT_CHT[spec_bait]} ], !!!{COLOR_CHT[SPEC_COLOR[area]]}色')
         messages.append(f'幻海釣餌: [ {BAIT_CHT[orola['BAIT']]} ]' + (', 以小釣大' if orola['MOOCH'] else ''))
         if orola['KING']:
-            messages.append(f'    !!!幻海海王!!!' + (f', 釣餌: [ {BAIT_CHT[orola["KING_BAIT"]]} ]' if "KING_BAIT" in orola else '') + f'!!!{COLOR_CHT[orola["COLOR"]]}色')
+            messages.append(f'    !!!幻海海王!!!' + (f', 釣餌: [ {BAIT_CHT[orola["KING_BAIT"]]} ]' if "KING_BAIT" in orola else '') + f', !!!{COLOR_CHT[orola["COLOR"]]}色')
         messages.append('=' * 20)
     
     return "\n".join(messages)
