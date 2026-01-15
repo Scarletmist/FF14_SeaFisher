@@ -45,9 +45,6 @@ class AnnounceBot(commands.Bot):
         intents.message_content = True
         super().__init__(command_prefix=command_prefix, intents=intents, **options)
 
-        # 載入頻道
-        self.registered_channels: Dict[str, int] = load_channels()
-
         # background task
         self._scheduler_task: Optional[asyncio.Task] = None
         self.bg_task_started = False
@@ -95,7 +92,8 @@ class AnnounceBot(commands.Bot):
 
     async def _send_announcement(self, run_time: datetime):
         guilds_to_remove = []
-        for guild_id_str, channel_id in list(self.registered_channels.items()):
+        channels = await load_channels()
+        for guild_id_str, channel_id in list(channels.items()):
             try:
                 channel = self.get_channel(channel_id)
                 if channel is None:
@@ -116,7 +114,6 @@ class AnnounceBot(commands.Bot):
                 logger.warning(f"[Error] sending to {channel_id}: {e}")
         if guilds_to_remove:
             for gid in guilds_to_remove:
-                self.registered_channels.pop(gid, None)
                 await save_channels(gid, None)
 
 
@@ -131,9 +128,9 @@ class AnnounceCog(commands.Cog):
     )
     @commands.has_guild_permissions(manage_guild=True)
     async def set_channel(self, ctx: commands.Context):
+        channels = await load_channels()
         guild_id = str(ctx.guild.id)
         channel_id = ctx.channel.id
-        self.bot.registered_channels[guild_id] = channel_id
         await save_channels(guild_id, channel_id)
         await ctx.send(f"已將此頻道 <#{channel_id}> 設為本伺服器的公告頻道。")
 
@@ -143,9 +140,9 @@ class AnnounceCog(commands.Cog):
     )
     @commands.has_guild_permissions(manage_guild=True)
     async def unset_channel(self, ctx: commands.Context):
+        channels = await load_channels()
         guild_id = str(ctx.guild.id)
-        if guild_id in self.bot.registered_channels:
-            del self.bot.registered_channels[guild_id]
+        if guild_id in channels:
             await save_channels(guild_id, None)
             await ctx.send("已取消本伺服器的公告頻道設定。")
         else:
@@ -156,8 +153,9 @@ class AnnounceCog(commands.Cog):
         help="顯示本伺服器目前設定的公告頻道"
     )
     async def show_channel(self, ctx: commands.Context):
+        channels = await load_channels()
         guild_id = str(ctx.guild.id)
-        channel_id = self.bot.registered_channels.get(guild_id)
+        channel_id = channels.get(guild_id)
         if channel_id:
             await ctx.send(f"目前本伺服器的公告頻道為 <#{channel_id}> 。")
         else:
@@ -168,8 +166,9 @@ class AnnounceCog(commands.Cog):
         help="取得目前時段/下個時段的釣場魚餌資訊"
     )
     async def get_bait(self, ctx: commands.Context):
+        channels = await load_channels()
         guild_id = str(ctx.guild.id)
-        channel_id = self.bot.registered_channels.get(guild_id)
+        channel_id = channels.get(guild_id)
         channel = self.bot.get_channel(channel_id)
         if channel is None:
             try:
