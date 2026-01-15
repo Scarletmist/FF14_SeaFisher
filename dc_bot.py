@@ -2,10 +2,10 @@
 import discord
 from discord.ext import commands
 import asyncio
-from aiohttp import web
+from aiohttp import web, ClientSession, ClientTimeout, ClientSession
 import json
 from pathlib import Path
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 from zoneinfo import ZoneInfo
 import os
 from typing import Dict, Optional
@@ -13,6 +13,7 @@ from fish_notice import get_bait
 import signal
 import logging
 import redis.asyncio as aioredis
+import ntplib
 
 REDIS_URL = os.environ["REDIS_URL"]  # 在 Render Web Service 的 env 設定
 r = aioredis.from_url(REDIS_URL, decode_responses=True)  # decode_responses 方便取回 str
@@ -38,6 +39,76 @@ async def load_channels() -> Dict[str, int]:
 
 async def save_channels(guild_id, data):
     await r.set(f"channel:{guild_id}", json.dumps(data))
+
+
+async def get_authoritative_now(tz_name: str = "Asia/Taipei", http_session: ClientSession = None) -> datetime:
+    """
+    優先使用 worldtimeapi -> timeapi.io -> ntplib -> 系統時間 的順序取得現在時間（返回 timezone-aware datetime）。
+    這個函式是 async，可在排程 loop 中呼叫。
+    """
+    # prefer reusing session if provided
+    close_session = False
+    if http_session is None:
+        http_session = ClientSession(timeout=ClientTimeout(total=5))
+        close_session = True
+
+    try:
+        # 1) try worldtimeapi (returns datetime with offset)
+        try:
+            url = f"https://worldtimeapi.org/api/timezone/{tz_name}"
+            async with http_session.get(url) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    # example field: 'datetime': '2026-01-14T11:55:05.140304+08:00'
+                    dt_str = data.get("datetime")
+                    if dt_str:
+                        dt = datetime.fromisoformat(dt_str)
+                        return dt
+        except Exception:
+            # swallow and try next
+            pass
+
+        # 2) try timeapi.io (some endpoints return dateTime without TZ, we'll attach tz)
+        try:
+            url2 = f"https://timeapi.io/api/time/current/zone?timeZone={tz_name}"
+            async with http_session.get(url2) as r2:
+                if r2.status == 200:
+                    j = await r2.json()
+                    dt_str = j.get("dateTime") or j.get("dateTimeRaw") or j.get("dateTimeUTC")
+                    # if returns e.g. "2025-02-10T22:20:16.6476606" without offset, attach tz
+                    if dt_str:
+                        try:
+                            dt = datetime.fromisoformat(dt_str)
+                            # if dt has no tzinfo, attach desired tz
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=ZoneInfo(tz_name))
+                            return dt
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        # 3) try NTP (blocking) via executor (ntplib not async)
+        try:
+            loop = asyncio.get_running_loop()
+            def ntp_query():
+                c = ntplib.NTPClient()
+                # use pool.ntp.org
+                resp = c.request("pool.ntp.org", version=3, timeout=5)
+                return datetime.fromtimestamp(resp.tx_time, tz=timezone.utc).astimezone(ZoneInfo(tz_name))
+            dt_ntp = await loop.run_in_executor(None, ntp_query)
+            return dt_ntp
+        except Exception:
+            pass
+
+        # 4) fallback to system clock (with tz)
+        now_sys = datetime.now(tz=ZoneInfo(tz_name))
+        return now_sys
+
+    finally:
+        if close_session:
+            await http_session.close()
+
 
 class AnnounceBot(commands.Bot):
     def __init__(self, command_prefix: str = "!", **options):
@@ -66,17 +137,18 @@ class AnnounceBot(commands.Bot):
 
     async def _schedule_loop(self):
         await self.wait_until_ready()
-        while not self.is_closed():
-            now = datetime.now(tz=TIMEZONE)
-            next_run = self._next_schedule_after(now)
-            wait_seconds = (next_run - now).total_seconds()
-            logger.info(f"[Scheduler] now={now.isoformat()}, next={next_run.isoformat()}, wait={int(wait_seconds)}s")
-            try:
-                await asyncio.sleep(wait_seconds)
-            except asyncio.CancelledError:
-                break
-            await self._send_announcement(next_run)
-            await asyncio.sleep(1)
+        async with ClientSession() as session:
+            while not self.is_closed():
+                now = await get_authoritative_now(tz_name="Asia/Taipei", http_session=session)
+                next_run = self._next_schedule_after(now)
+                wait_seconds = (next_run - now).total_seconds()
+                logger.info(f"[Scheduler] now={now.isoformat()}, next={next_run.isoformat()}, wait={int(wait_seconds)}s")
+                try:
+                    await asyncio.sleep(wait_seconds)
+                except asyncio.CancelledError:
+                    break
+                await self._send_announcement(next_run)
+                await asyncio.sleep(1)
 
     def _next_schedule_after(self, now: datetime) -> datetime:
         today = now.date()
@@ -86,7 +158,8 @@ class AnnounceBot(commands.Bot):
             if cand > now:
                 candidates.append(cand)
         if candidates:
-            return min(candidates)
+            # return min(candidates)
+            return now + timedelta(minutes=1)
         tomorrow = today + timedelta(days=1)
         return datetime.combine(tomorrow, time(hour=SCHEDULE_HOURS[0], minute=SCHEDULE_MINUTE, second=0), tzinfo=TIMEZONE)
 
@@ -105,7 +178,7 @@ class AnnounceBot(commands.Bot):
                     guilds_to_remove.append(guild_id_str)
                     continue
                 timestamp = run_time.astimezone(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
-                message = get_bait(datetime.now(tz=TIMEZONE))
+                message = get_bait(run_time)
                 await channel.send(message)
                 logger.info(f"[Info] sent announcement to {channel_id}")
             except discord.Forbidden:
