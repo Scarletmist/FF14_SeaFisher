@@ -172,6 +172,7 @@ def main():
     if TOKEN is None:
         print("請先設定 DISCORD_BOT_TOKEN 環境變數")
         return
+    print(TOKEN)
     bot = AnnounceBot(command_prefix="!")
     bot.run(TOKEN)
 
