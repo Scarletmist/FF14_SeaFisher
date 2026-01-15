@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import math
+from zoneinfo import ZoneInfo
 
 BAIT_CHT = {
     'Glowworm': '火螢',
@@ -128,7 +129,7 @@ def next_even_hour_full(now=None, threshold_minute=30, include_equal=True):
 
 
 def get_route(targetDate: datetime):
-    first_date = datetime(1970, 1, 1)
+    first_date = datetime(1970, 1, 1, tzinfo=ZoneInfo("Asia/Taipei"))
     voyageNumber = math.floor((targetDate - first_date).total_seconds() / TWO_HOURS)
     index = (OFFSET + voyageNumber) % len(PATTERN)
 
@@ -155,7 +156,7 @@ def get_bait(rawDate: datetime=datetime.now()):
         messages.append(f'釣場 No.{i + 1}, 釣餌: [ {BAIT_CHT[spec_bait]} ], !!!{COLOR_CHT[SPEC_COLOR[area]]}色')
         messages.append(f'幻海釣餌: [ {BAIT_CHT[orola['BAIT']]} ]' + (', 以小釣大' if orola['MOOCH'] else ''))
         if orola['KING']:
-            messages.append(f'    !!!幻海海王!!!' + (f', 釣餌: [ {BAIT_CHT[orola["KING_BAIT"]]} ]' if "KING_BAIT" in orola else '') + f', !!!{COLOR_CHT[orola["COLOR"]]}色')
+            messages.append(f'    !!!幻海海王!!!' + (f', 釣餌: [ {BAIT_CHT[orola["KING_BAIT"]]} ]' if "KING_BAIT" in orola else '') + f'!!!{COLOR_CHT[orola["COLOR"]]}色')
         messages.append('=' * 20)
     
     return "\n".join(messages)
