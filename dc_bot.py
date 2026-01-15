@@ -94,7 +94,7 @@ class AnnounceBot(commands.Bot):
                     guilds_to_remove.append(guild_id_str)
                     continue
                 timestamp = run_time.astimezone(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
-                message = get_bait()
+                message = get_bait(datetime.now(tz=TIMEZONE))
                 await channel.send(message)
                 print(f"[Info] sent announcement to {channel_id}")
             except discord.Forbidden:
@@ -165,14 +165,13 @@ class AnnounceCog(commands.Cog):
                 channel = None
         
         if channel:
-            await channel.send(get_bait())
+            await channel.send(get_bait(datetime.now(tz=TIMEZONE)))
 
 # ---------- 啟動 ----------
 def main():
     if TOKEN is None:
         print("請先設定 DISCORD_BOT_TOKEN 環境變數")
         return
-    print(TOKEN)
     bot = AnnounceBot(command_prefix="!")
     bot.run(TOKEN)
 
