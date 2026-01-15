@@ -86,8 +86,7 @@ class AnnounceBot(commands.Bot):
             if cand > now:
                 candidates.append(cand)
         if candidates:
-            # return min(candidates)
-            return now + timedelta(minutes=1)
+            return min(candidates)
         tomorrow = today + timedelta(days=1)
         return datetime.combine(tomorrow, time(hour=SCHEDULE_HOURS[0], minute=SCHEDULE_MINUTE, second=0), tzinfo=TIMEZONE)
 
