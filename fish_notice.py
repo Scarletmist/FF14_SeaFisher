@@ -175,7 +175,7 @@ def get_source():
     messages = ["幻海海王魚餌取得方式:"]
     for name, source in BAIT_SOURCE.items():
         cht_name = BAIT_CHT[name]
-        messages.append(cht_name + ' ' * (4 - len(cht_name)) * 2 + f': {source}')
+        messages.append(cht_name + '　' * (4 - len(cht_name)) + f': {source}')
     return "\n".join(messages)
 
 
