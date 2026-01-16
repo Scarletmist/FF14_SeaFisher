@@ -14,6 +14,15 @@ BAIT_CHT = {
     'Plump Worm': '海腸'
 }
 
+BAIT_SOURCE = {
+    'Glowworm': '海都市場─工具商',
+    'Shrimp Cage': '海都市場─工具商',
+    'Heavy Steel Jig': '金工40級製作',
+    'Rat Tail': '海都市場─工具商',
+    'Squid Strip': '海釣碼頭─工票交易員(需解5.0藍++)',
+    'Pill Bug': '海都市場─工具商',
+}
+
 COLOR_CHT = {
     'Red': '紅',
     'Green': '綠'
@@ -160,3 +169,13 @@ def get_bait(rawDate: datetime=datetime.now()):
         messages.append('=' * 20)
     
     return "\n".join(messages)
+
+
+def get_source():
+    messages = []
+    for name, source in BAIT_SOURCE.items():
+        cht_name = BAIT_CHT[name]
+        messages.append(cht_name + ' ' * (4 - len(cht_name)) * 2 + f': {source}')
+    return "\n".join(messages)
+
+
