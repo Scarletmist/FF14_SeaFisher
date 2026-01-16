@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, time, timezone
 from zoneinfo import ZoneInfo
 import os
 from typing import Dict, Optional
-from fish_notice import get_bait
+from fish_notice import get_bait, get_source
 import signal
 import logging
 import redis.asyncio as aioredis
@@ -250,6 +250,14 @@ class AnnounceCog(commands.Cog):
         
         if channel:
             await channel.send(get_bait(datetime.now(tz=TIMEZONE)))
+
+    @commands.command(
+        name="get_source",
+        help="顯示特殊魚餌取得方式"
+    )
+    async def show_channel(self, ctx: commands.Context):
+        await ctx.send(get_source())
+
 
 # ---------- 啟動 ----------
 bot = AnnounceBot(command_prefix="？")
