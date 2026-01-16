@@ -255,7 +255,7 @@ class AnnounceCog(commands.Cog):
         name="get_source",
         help="顯示特殊魚餌取得方式"
     )
-    async def show_channel(self, ctx: commands.Context):
+    async def get_source(self, ctx: commands.Context):
         await ctx.send(get_source())
 
 
