@@ -15,7 +15,7 @@ import logging
 import redis.asyncio as aioredis
 import ntplib
 
-REDIS_URL = os.environ["REDIS_URL"]  # 在 Render Web Service 的 env 設定
+REDIS_URL = "MTQ2MDk2MTYyNzY2NjEyMDg2OQ.GH4MlI.oVCNx0BNalQa0J4WIFkWUrPAsguVSCWrPqSprk" #os.environ["REDIS_URL"]  # 在 Render Web Service 的 env 設定
 r = aioredis.from_url(REDIS_URL, decode_responses=True)  # decode_responses 方便取回 str
 
 logging.basicConfig(level=logging.INFO)
