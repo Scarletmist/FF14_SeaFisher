@@ -21,7 +21,7 @@ r = aioredis.from_url(REDIS_URL, decode_responses=True)  # decode_responses 方�
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dc_bot")
 
-TOKEN = "MTQ2MDk2MTYyNzY2NjEyMDg2OQ.GH4MlI.oVCNx0BNalQa0J4WIFkWUrPAsguVSCWrPqSprk" #os.getenv("DISCORD_BOT_TOKEN")
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 PORT = int(os.environ.get("PORT", 10000))  # Render 會提供 PORT
 CHANNELS_FILE = Path("channels.json")
 TIMEZONE = ZoneInfo("Asia/Taipei")
