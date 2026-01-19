@@ -1,6 +1,6 @@
 # announce_bot.py（只貼關鍵改動部分與主結構）
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import asyncio
 from aiohttp import web, ClientSession, ClientTimeout, ClientSession
 import json
@@ -14,7 +14,6 @@ import signal
 import logging
 import redis.asyncio as aioredis
 import ntplib
-import time
 
 REDIS_URL = os.environ["REDIS_URL"]  # 在 Render Web Service 的 env 設定
 r = aioredis.from_url(REDIS_URL, decode_responses=True)  # decode_responses 方便取回 str
@@ -111,70 +110,6 @@ async def get_authoritative_now(tz_name: str = "Asia/Taipei", http_session: Clie
             await http_session.close()
 
 
-async def start_bot_with_backoff(bot, token, max_retries=10, initial_delay=5):
-    """
-    嘗試啟動 bot，遇到例外用指數退避重試。對 429 (Too Many Requests) 會等較久再試。
-    若遇到非 429 的 HTTPException（例如 invalid token），則不會一直無限重試。
-    """
-    attempt = 0
-    delay = initial_delay
-    while True:
-        attempt += 1
-        try:
-            logger.info(f"Starting bot (attempt {attempt})...")
-            # 這會阻塞直到 bot.start() 結束（通常是直到斷線/例外/關閉）
-            await bot.start(token)
-            logger.info("bot.start() returned normally (bot stopped).")
-            return
-        except asyncio.CancelledError:
-            logger.info("start_bot_with_backoff cancelled.")
-            raise
-        except Exception as e:
-            # 記錄完整 exception
-            logger.exception("bot.start() raised exception")
-
-            # 嘗試判別是否為 429 (Too Many Requests)
-            text = str(e)
-            is_429 = ("429" in text) or ("Too Many Requests" in text)
-            # 嘗試從 exception 嘗試抓出 response header 的 Retry-After（best-effort）
-            retry_after = None
-            resp = getattr(e, "response", None)
-            if resp is not None:
-                try:
-                    # 若 response 物件有 headers 屬性
-                    headers = getattr(resp, "headers", None)
-                    if headers:
-                        ra = headers.get("Retry-After") or headers.get("retry-after")
-                        if ra:
-                            retry_after = float(ra)
-                except Exception:
-                    retry_after = None
-
-            if is_429:
-                wait = retry_after if retry_after is not None else delay
-                logger.warning(f"Received 429 Too Many Requests. Waiting {wait} seconds before retrying.")
-                await asyncio.sleep(wait)
-                # 指數退避，但限制最大等待（例如 300s = 5 分鐘）
-                delay = min(delay * 2, 300)
-                # 如果超過最大重試次數，停止重試（避免永遠重啟）
-                if attempt >= max_retries:
-                    logger.error(f"Exceeded max retries ({max_retries}) after repeated 429 responses. Giving up.")
-                    return
-                continue
-            else:
-                # 非 429 的情況（例如 401 invalid token、網路錯誤等）
-                # 有些非 429 仍可重試 （例如 transient network error），但對於 token 驗證錯誤，不應重試。
-                # 這裡採保守策略：重試少數次，之後放棄。
-                if attempt < max_retries:
-                    logger.warning(f"Non-429 exception, retrying after {delay} seconds (attempt {attempt}/{max_retries}).")
-                    await asyncio.sleep(delay)
-                    delay = min(delay * 2, 60)
-                    continue
-                else:
-                    logger.error("Exceeded max retries for non-429 error; giving up.")
-                    return
-
-
 class AnnounceBot(commands.Bot):
     def __init__(self, command_prefix: str = "!", **options):
         intents = discord.Intents.default()
@@ -184,36 +119,41 @@ class AnnounceBot(commands.Bot):
         # background task
         self._scheduler_task: Optional[asyncio.Task] = None
         self.bg_task_started = False
+        self.is_ready = False
 
     async def setup_hook(self):
+        logger.info("SETUP HOOK")
         # 在 bot ready 之前把 Cog 加進來
         await self.add_cog(AnnounceCog(self))
 
-        # 啟動排程
-        if not self.bg_task_started:
-            self._scheduler_task = self.loop.create_task(self._schedule_loop())
-            self.bg_task_started = True
+        self.my_background_task.start()
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (id: {self.user.id})")
         logger.info("------")
+        self.is_ready = True
 
-    # schedule loop 與其它函式照原本實作（略過，保留你原先的 _schedule_loop/_next_schedule_after/_send_announcement）
-
-    async def _schedule_loop(self):
-        await self.wait_until_ready()
+    @tasks.loop(minutes=5)  # task runs every 60 seconds
+    async def my_background_task(self):
         async with ClientSession() as session:
             while not self.is_closed():
                 now = await get_authoritative_now(tz_name="Asia/Taipei", http_session=session)
+                logger.info(f"NOW: {now}")
                 next_run = self._next_schedule_after(now)
                 wait_seconds = (next_run - now).total_seconds()
                 logger.info(f"[Scheduler] now={now.isoformat()}, next={next_run.isoformat()}, wait={int(wait_seconds)}s")
-                try:
-                    await asyncio.sleep(wait_seconds)
-                except asyncio.CancelledError:
-                    break
-                await self._send_announcement(next_run)
-                await asyncio.sleep(1)
+
+                if wait_seconds <= 300:
+                    try:
+                        await asyncio.sleep(wait_seconds)
+                    except asyncio.CancelledError:
+                        return
+                    
+                    await self._send_announcement(next_run)
+
+    @my_background_task.before_loop
+    async def before_my_task(self):
+        await self.wait_until_ready()  # wait until the bot logs in
 
     def _next_schedule_after(self, now: datetime) -> datetime:
         today = now.date()
@@ -265,7 +205,6 @@ class AnnounceCog(commands.Cog):
     )
     @commands.has_guild_permissions(manage_guild=True)
     async def set_channel(self, ctx: commands.Context):
-        channels = await load_channels()
         guild_id = str(ctx.guild.id)
         channel_id = ctx.channel.id
         await save_channels(guild_id, channel_id)
@@ -378,7 +317,9 @@ async def main():
     runner = await start_http_server(PORT)
 
     # 啟動 discord bot（在 background task）
-    await bot.start(TOKEN)
+    bot_task = asyncio.create_task(bot.start(TOKEN))
+    bot_task.add_done_callback(_task_done_callback)
+    # await bot.start(TOKEN)
 
     # 等待關機事件
     await shutdown_event.wait()
@@ -399,12 +340,12 @@ async def main():
         logger.exception("Error cleaning up HTTP runner: %s", e)
 
     # 等待 bot_task 結束（若尚未）
-    #try:
-    #    await asyncio.wait_for(bot_task, timeout=10)
-    #except asyncio.TimeoutError:
-    #    logger.warning("Bot task did not finish within timeout after close().")
-    #except Exception:
-    #    logger.exception("bot_task raised exception after close()")
+    try:
+        await asyncio.wait_for(bot_task, timeout=10)
+    except asyncio.TimeoutError:
+        logger.warning("Bot task did not finish within timeout after close().")
+    except Exception:
+        logger.exception("bot_task raised exception after close()")
 
 if __name__ == "__main__":
     try:
