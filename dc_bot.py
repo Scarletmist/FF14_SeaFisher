@@ -378,8 +378,7 @@ async def main():
     runner = await start_http_server(PORT)
 
     # 啟動 discord bot（在 background task）
-    bot_task = asyncio.create_task(start_bot_with_backoff(bot, TOKEN), name="discord_start_with_backoff")
-    bot_task.add_done_callback(_task_done_callback)
+    await bot.start(token)
 
     # 等待關機事件
     await shutdown_event.wait()
@@ -400,12 +399,12 @@ async def main():
         logger.exception("Error cleaning up HTTP runner: %s", e)
 
     # 等待 bot_task 結束（若尚未）
-    try:
-        await asyncio.wait_for(bot_task, timeout=10)
-    except asyncio.TimeoutError:
-        logger.warning("Bot task did not finish within timeout after close().")
-    except Exception:
-        logger.exception("bot_task raised exception after close()")
+    #try:
+    #    await asyncio.wait_for(bot_task, timeout=10)
+    #except asyncio.TimeoutError:
+    #    logger.warning("Bot task did not finish within timeout after close().")
+    #except Exception:
+    #    logger.exception("bot_task raised exception after close()")
 
 if __name__ == "__main__":
     try:
