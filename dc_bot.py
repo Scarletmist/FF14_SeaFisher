@@ -152,13 +152,13 @@ async def start_bot_with_backoff(bot, token, max_retries=10, initial_delay=5):
 
             if is_429:
                 wait = retry_after if retry_after is not None else delay
-                logger.warning("Received 429 Too Many Requests. Waiting %s seconds before retrying.", wait)
+                logger.warning(f"Received 429 Too Many Requests. Waiting {wait} seconds before retrying.")
                 await asyncio.sleep(wait)
                 # 指數退避，但限制最大等待（例如 300s = 5 分鐘）
                 delay = min(delay * 2, 300)
                 # 如果超過最大重試次數，停止重試（避免永遠重啟）
                 if attempt >= max_retries:
-                    logger.error("Exceeded max retries (%s) after repeated 429 responses. Giving up.", max_retries)
+                    logger.error(f"Exceeded max retries ({max_retries}) after repeated 429 responses. Giving up.")
                     return
                 continue
             else:
@@ -166,7 +166,7 @@ async def start_bot_with_backoff(bot, token, max_retries=10, initial_delay=5):
                 # 有些非 429 仍可重試 （例如 transient network error），但對於 token 驗證錯誤，不應重試。
                 # 這裡採保守策略：重試少數次，之後放棄。
                 if attempt < max_retries:
-                    logger.warning("Non-429 exception, retrying after %s seconds (attempt %s/%s).", delay, attempt, max_retries)
+                    logger.warning(f"Non-429 exception, retrying after {delay} seconds (attempt {attempt}/{max_retries}).")
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, 60)
                     continue
