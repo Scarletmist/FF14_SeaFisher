@@ -294,6 +294,7 @@ def _task_done_callback(task: asyncio.Task):
     if exc:
         # task.exception() 已包含堆疊訊息，這裡用 logger.exception 記錄
         logger.exception("Bot task raised an exception:", exc_info=exc)
+        os.system('kill 1')
     else:
         logger.info("Bot task finished without exception (unexpected for long-running bot).")
 
@@ -331,6 +332,7 @@ async def main():
         logger.info("Discord bot closed.")
     except Exception as e:
         logger.exception("Error closing bot: %s", e)
+        os.system('kill 1')
 
     # 再關掉 HTTP server
     try:
