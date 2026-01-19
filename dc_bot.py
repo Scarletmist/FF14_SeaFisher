@@ -242,18 +242,7 @@ class AnnounceCog(commands.Cog):
         help="取得目前時段/下個時段的釣場魚餌資訊"
     )
     async def get_bait(self, ctx: commands.Context):
-        channels = await load_channels()
-        guild_id = str(ctx.guild.id)
-        channel_id = channels.get(guild_id)
-        channel = self.bot.get_channel(channel_id)
-        if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(channel_id)
-            except Exception:
-                channel = None
-        
-        if channel:
-            await channel.send(get_bait(datetime.now(tz=TIMEZONE)))
+        await ctx.send(get_bait(datetime.now(tz=TIMEZONE)))
 
     @commands.command(
         name="get_source",
