@@ -14,6 +14,7 @@ import signal
 import logging
 import redis.asyncio as aioredis
 import ntplib
+import time
 
 REDIS_URL = os.environ["REDIS_URL"]  # 在 Render Web Service 的 env 設定
 r = aioredis.from_url(REDIS_URL, decode_responses=True)  # decode_responses 方便取回 str
@@ -108,6 +109,70 @@ async def get_authoritative_now(tz_name: str = "Asia/Taipei", http_session: Clie
     finally:
         if close_session:
             await http_session.close()
+
+
+async def start_bot_with_backoff(bot, token, max_retries=10, initial_delay=5):
+    """
+    嘗試啟動 bot，遇到例外用指數退避重試。對 429 (Too Many Requests) 會等較久再試。
+    若遇到非 429 的 HTTPException（例如 invalid token），則不會一直無限重試。
+    """
+    attempt = 0
+    delay = initial_delay
+    while True:
+        attempt += 1
+        try:
+            logger.info(f"Starting bot (attempt {attempt})...")
+            # 這會阻塞直到 bot.start() 結束（通常是直到斷線/例外/關閉）
+            await bot.start(token)
+            logger.info("bot.start() returned normally (bot stopped).")
+            return
+        except asyncio.CancelledError:
+            logger.info("start_bot_with_backoff cancelled.")
+            raise
+        except Exception as e:
+            # 記錄完整 exception
+            logger.exception("bot.start() raised exception")
+
+            # 嘗試判別是否為 429 (Too Many Requests)
+            text = str(e)
+            is_429 = ("429" in text) or ("Too Many Requests" in text)
+            # 嘗試從 exception 嘗試抓出 response header 的 Retry-After（best-effort）
+            retry_after = None
+            resp = getattr(e, "response", None)
+            if resp is not None:
+                try:
+                    # 若 response 物件有 headers 屬性
+                    headers = getattr(resp, "headers", None)
+                    if headers:
+                        ra = headers.get("Retry-After") or headers.get("retry-after")
+                        if ra:
+                            retry_after = float(ra)
+                except Exception:
+                    retry_after = None
+
+            if is_429:
+                wait = retry_after if retry_after is not None else delay
+                logger.warning("Received 429 Too Many Requests. Waiting %s seconds before retrying.", wait)
+                await asyncio.sleep(wait)
+                # 指數退避，但限制最大等待（例如 300s = 5 分鐘）
+                delay = min(delay * 2, 300)
+                # 如果超過最大重試次數，停止重試（避免永遠重啟）
+                if attempt >= max_retries:
+                    logger.error("Exceeded max retries (%s) after repeated 429 responses. Giving up.", max_retries)
+                    return
+                continue
+            else:
+                # 非 429 的情況（例如 401 invalid token、網路錯誤等）
+                # 有些非 429 仍可重試 （例如 transient network error），但對於 token 驗證錯誤，不應重試。
+                # 這裡採保守策略：重試少數次，之後放棄。
+                if attempt < max_retries:
+                    logger.warning("Non-429 exception, retrying after %s seconds (attempt %s/%s).", delay, attempt, max_retries)
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 60)
+                    continue
+                else:
+                    logger.error("Exceeded max retries for non-429 error; giving up.")
+                    return
 
 
 class AnnounceBot(commands.Bot):
@@ -313,7 +378,7 @@ async def main():
     runner = await start_http_server(PORT)
 
     # 啟動 discord bot（在 background task）
-    bot_task = asyncio.create_task(bot.start(TOKEN))
+    bot_task = asyncio.create_task(start_bot_with_backoff(bot, TOKEN), name="discord_start_with_backoff")
     bot_task.add_done_callback(_task_done_callback)
 
     # 等待關機事件
