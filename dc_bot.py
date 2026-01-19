@@ -260,7 +260,6 @@ class AnnounceCog(commands.Cog):
 
 
 # ---------- 啟動 ----------
-bot = AnnounceBot(command_prefix="？")
 
 # 以下為 HTTP server（簡單 health check）
 async def handle_ok(request):
@@ -276,10 +275,31 @@ async def start_http_server(port: int):
     logger.info(f"HTTP server listening on 0.0.0.0:{port}")
     return runner
 
+
+def _task_done_callback(task: asyncio.Task):
+    """
+    當 bot.start 的 background task 完成時呼叫（不論成功或失敗）。
+    若有 exception，就記錄完整 traceback。
+    """
+    try:
+        exc = task.exception()  # 這會把 exception 提取出來（若有的話）
+    except asyncio.CancelledError:
+        logger.info("Bot task was cancelled.")
+        return
+
+    if exc:
+        # task.exception() 已包含堆疊訊息，這裡用 logger.exception 記錄
+        logger.exception("Bot task raised an exception:", exc_info=exc)
+    else:
+        logger.info("Bot task finished without exception (unexpected for long-running bot).")
+
+
 # 主流程：啟動 http server 與 discord bot 並處理 shutdown
 async def main():
     loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
+
+    bot = AnnounceBot(command_prefix="？")
 
     # Unix: 把 SIGINT/SIGTERM 與 event 連結
     for s in (signal.SIGINT, signal.SIGTERM):
@@ -294,6 +314,7 @@ async def main():
 
     # 啟動 discord bot（在 background task）
     bot_task = asyncio.create_task(bot.start(TOKEN))
+    bot_task.add_done_callback(_task_done_callback)
 
     # 等待關機事件
     await shutdown_event.wait()
