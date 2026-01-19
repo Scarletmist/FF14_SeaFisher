@@ -378,7 +378,7 @@ async def main():
     runner = await start_http_server(PORT)
 
     # 啟動 discord bot（在 background task）
-    await bot.start(token)
+    await bot.start(TOKEN)
 
     # 等待關機事件
     await shutdown_event.wait()
