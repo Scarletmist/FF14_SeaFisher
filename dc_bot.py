@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, time, timezone
 from zoneinfo import ZoneInfo
 import os
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple, List
 from fish_notice import get_bait, get_source
 import signal
 import logging
@@ -28,19 +28,56 @@ TIMEZONE = ZoneInfo("Asia/Taipei")
 SCHEDULE_HOURS = list(range(1, 24, 2))
 SCHEDULE_MINUTE = 55
 
-async def load_channels() -> Dict[str, int]:
-    keys = await r.keys("channel:*")
-    channels = {}
-    for k in keys:
-        if 'type' in k:
-            continue
-        val = await r.get(k)
-        guild_id = k.split(":",1)[1]
-        channels[guild_id] = json.loads(val) if val else {}
-    return channels
 
-async def save_channels(guild_id, data):
-    await r.set(f"channel:{guild_id}", json.dumps(data))
+async def get_channels(guild_id) -> List[str]:
+    if await r.sismember('channel:ids', guild_id):
+        return await r.hkeys(f'channel:{guild_id}')
+    else:
+        return []
+
+async def load_channels() -> Tuple[List[str]]:
+    guild_ids_key = 'channel:ids'
+
+    guild_ids = await r.smembers(guild_ids_key)
+
+    fishes = []
+    ores = []
+
+    for guild_id in guild_ids:
+        channels = await r.hgetall(f'channel:{guild_id}')
+        for channel_id, channel_type in channels.items():
+            if channel_type == 'fish':
+                fishes.append(channel_id)
+            else:
+                ores.append(channel_id)
+        
+    return fishes, ores
+
+
+async def save_channels(guild_id, channel_id, new_type):
+    if await r.sismember('channel:ids', guild_id):
+        old_channels = await r.hgetall(f'channel:{guild_id}')
+        new_channels = {}
+
+        for c_id, old_type in old_channels.items():
+            if old_type != new_type:
+                new_channels[c_id] = old_type
+        new_channels[channel_id] = new_type
+        await r.hset(f"channel:{guild_id}", new_channels)
+    else:
+        await r.hset(f"channel:{guild_id}", {channel_id: new_type})
+        await r.sadd('channel:ids', guild_id)
+
+
+async def remove_channel(guild_id, channel_id):
+    if await r.sismember('channel:ids', guild_id):
+        old_channels = await r.hgetall(f'channel:{guild_id}')
+        new_channels = {}
+
+        for c_id in old_channels.keys():
+            if c_id != channel_id:
+                new_channels[c_id] = old_channels[c_id]
+        await r.hset(f"channel:{guild_id}", new_channels)
 
 
 async def get_authoritative_now(tz_name: str = "Asia/Taipei", http_session: ClientSession = None) -> datetime:
@@ -145,13 +182,15 @@ class AnnounceBot(commands.Bot):
                 wait_seconds = (next_run - now).total_seconds()
                 logger.info(f"[Scheduler] now={now.isoformat()}, next={next_run.isoformat()}, wait={int(wait_seconds)}s")
 
+                fish_channels, ore_channels = await load_channels()
+
                 if wait_seconds <= 300:
                     try:
                         await asyncio.sleep(wait_seconds)
                     except asyncio.CancelledError:
                         return
                     
-                    await self._send_announcement(next_run)
+                    await self._send_sea_announcement(next_run, fish_channels)
 
     @my_background_task.before_loop
     async def before_my_task(self):
@@ -169,10 +208,8 @@ class AnnounceBot(commands.Bot):
         tomorrow = today + timedelta(days=1)
         return datetime.combine(tomorrow, time(hour=SCHEDULE_HOURS[0], minute=SCHEDULE_MINUTE, second=0), tzinfo=TIMEZONE)
 
-    async def _send_announcement(self, run_time: datetime):
-        guilds_to_remove = []
-        channels = await load_channels()
-        for guild_id_str, channel_id in list(channels.items()):
+    async def _send_sea_announcement(self, run_time: datetime, fish_channels):
+        for channel_id in fish_channels:
             try:
                 channel = self.get_channel(channel_id)
                 if channel is None:
@@ -181,19 +218,13 @@ class AnnounceBot(commands.Bot):
                     except Exception:
                         channel = None
                 if channel is None:
-                    guilds_to_remove.append(guild_id_str)
                     continue
                 timestamp = run_time.astimezone(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
                 message = get_bait(run_time)
                 await channel.send(message)
                 logger.info(f"[Info] sent announcement to {channel_id}")
-            except discord.Forbidden:
-                guilds_to_remove.append(guild_id_str)
             except Exception as e:
                 logger.warning(f"[Error] sending to {channel_id}: {e}")
-        if guilds_to_remove:
-            for gid in guilds_to_remove:
-                await save_channels(gid, None)
 
 
 # ----- 將命令放在 Cog 裡 -----
@@ -202,15 +233,26 @@ class AnnounceCog(commands.Cog):
         self.bot = bot
 
     @commands.command(
-        name="set_announce_channel",
-        help="將此頻道設為公告頻道（需具管理伺服器或管理員權限）"
+        name="set_sea_announce_channel",
+        help="將此頻道設為海釣公告頻道（需具管理伺服器或管理員權限）"
     )
     @commands.has_guild_permissions(manage_guild=True)
-    async def set_channel(self, ctx: commands.Context):
+    async def set_fish_channel(self, ctx: commands.Context):
         guild_id = str(ctx.guild.id)
         channel_id = ctx.channel.id
-        await save_channels(guild_id, channel_id)
-        await ctx.send(f"已將此頻道 <#{channel_id}> 設為本伺服器的公告頻道。")
+        await save_channels(guild_id, channel_id, 'fish')
+        await ctx.send(f"已將此頻道 <#{channel_id}> 設為本伺服器海釣的公告頻道。")
+    
+    @commands.command(
+        name="set_ore_announce_channel",
+        help="將此頻道設為海釣公告頻道（需具管理伺服器或管理員權限）"
+    )
+    @commands.has_guild_permissions(manage_guild=True)
+    async def set_ore_channel(self, ctx: commands.Context):
+        guild_id = str(ctx.guild.id)
+        channel_id = ctx.channel.id
+        await save_channels(guild_id, channel_id, 'ore')
+        await ctx.send(f"已將此頻道 <#{channel_id}> 設為本伺服器採礦的公告頻道。")
 
     @commands.command(
         name="unset_announce_channel",
@@ -218,13 +260,14 @@ class AnnounceCog(commands.Cog):
     )
     @commands.has_guild_permissions(manage_guild=True)
     async def unset_channel(self, ctx: commands.Context):
-        channels = await load_channels()
         guild_id = str(ctx.guild.id)
-        if guild_id in channels:
-            await save_channels(guild_id, None)
-            await ctx.send("已取消本伺服器的公告頻道設定。")
+        channels = await get_channels(guild_id)
+        channel_id = ctx.channel.id
+        if channel_id in channels:
+            await remove_channel(guild_id, channel_id)
+            await ctx.send("已取消此頻道 <#{channel_id}> 的公告頻道設定。")
         else:
-            await ctx.send("本伺服器尚未設定公告頻道。")
+            await ctx.send("此頻道非本伺服器的公告頻道。")
 
     @commands.command(
         name="show_announce_channel",
@@ -233,9 +276,12 @@ class AnnounceCog(commands.Cog):
     async def show_channel(self, ctx: commands.Context):
         channels = await load_channels()
         guild_id = str(ctx.guild.id)
-        channel_id = channels.get(guild_id)
+        messages = []
+        type_mapping = {'fish': '海釣', 'ore': '採礦'}
+        for channel_id, notice_type in channels[guild_id]:
+            messages.append(f"目前本伺服器的{type_mapping[notice_type]}公告頻道為 <#{channel_id}> 。")
         if channel_id:
-            await ctx.send(f"目前本伺服器的公告頻道為 <#{channel_id}> 。")
+            await ctx.send("\n".join(messages))
         else:
             await ctx.send("本伺服器尚未設定公告頻道。")
     
