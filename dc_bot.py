@@ -36,7 +36,7 @@ async def remove_ore(name):
 
 
 async def set_ore(name, time, place):
-    await r.hset(f'channel:ore:{name}', {'time': time, 'place': place})
+    await r.hset(f'channel:ore:{name}', json.dumps({'time': time, 'place': place}))
 
 
 async def get_ores():
@@ -85,9 +85,9 @@ async def save_channels(guild_id, channel_id, new_type):
             if old_type != new_type:
                 new_channels[c_id] = old_type
         new_channels[channel_id] = new_type
-        await r.hset(f"channel:{guild_id}", new_channels)
+        await r.hset(f"channel:{guild_id}", json.dumps(new_channels))
     else:
-        await r.hset(f"channel:{guild_id}", {channel_id: new_type})
+        await r.hset(f"channel:{guild_id}", json.dumps({channel_id: new_type}))
         await r.sadd('channel:ids', guild_id)
 
 
@@ -99,7 +99,7 @@ async def remove_channel(guild_id, channel_id):
         for c_id in old_channels.keys():
             if c_id != channel_id:
                 new_channels[c_id] = old_channels[c_id]
-        await r.hset(f"channel:{guild_id}", new_channels)
+        await r.hset(f"channel:{guild_id}", json.dumps(new_channels))
 
 
 async def get_authoritative_now(tz_name: str = "Asia/Taipei", http_session: ClientSession = None) -> datetime:
