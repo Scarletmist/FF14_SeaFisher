@@ -32,6 +32,8 @@ async def load_channels() -> Dict[str, int]:
     keys = await r.keys("channel:*")
     channels = {}
     for k in keys:
+        if 'type' in k:
+            continue
         val = await r.get(k)
         guild_id = k.split(":",1)[1]
         channels[guild_id] = json.loads(val) if val else {}
