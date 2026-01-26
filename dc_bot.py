@@ -319,11 +319,11 @@ class AnnounceCog(commands.Cog):
         help="顯示本伺服器目前設定的公告頻道"
     )
     async def show_channel(self, ctx: commands.Context):
-        channels = await load_channels()
+        channels = await get_channels(guild_id)
         guild_id = str(ctx.guild.id)
         messages = []
         type_mapping = {'fish': '海釣', 'ore': '採礦'}
-        for channel_id, notice_type in channels[guild_id]:
+        for channel_id, notice_type in channels.items():
             messages.append(f"目前本伺服器的{type_mapping[notice_type]}公告頻道為 <#{channel_id}> 。")
         if channel_id:
             await ctx.send("\n".join(messages))
