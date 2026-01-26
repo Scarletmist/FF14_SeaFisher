@@ -196,7 +196,7 @@ class AnnounceBot(commands.Bot):
         logger.info("------")
         self.is_ready = True
 
-    @tasks.loop(minutes=5)  # task runs every 60 seconds
+    @tasks.loop(minutes=1)  # task runs every 60 seconds
     async def my_background_task(self):
         async with ClientSession() as session:
             while not self.is_closed():
@@ -348,12 +348,19 @@ class AnnounceCog(commands.Cog):
     async def set_ore(self, ctx: commands.Context, name: str, time: int, place: str):
         await set_ore(name, time, place)
         await ctx.send(f"已設定 `{name}` => {{'time': {time}, 'place': '{place}'}}。")
-    
 
     @commands.command(name="remove_ore", help="remove_ore <name>  — 移除監控礦物")
     async def remove_ore(self, ctx: commands.Context, name: str):
         await remove_ore(name)
         await ctx.send(f"已移除 {name} 的礦物監控。")
+    
+    @commands.command(name="list_ore", help="檢視所有監控礦物")
+    async def list_ore(self, ctx: commands.Context):
+        ores = await get_ores()
+        messages = ["目前監控礦物:"]
+        for ore, ore_info in ores.items():
+            messages.append(f"已設定 `{ore}` => {{'time': {ore_info['time']}, 'place': '{ore_info['place']}'}}。")
+        await ctx.send("\n".join(messages))
 
 
 # ---------- 啟動 ----------
