@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import os
 from typing import Dict, Optional, Tuple, List
 from fish_notice import get_bait, get_source
+from ore_notice import get_ore
 import signal
 import logging
 import redis.asyncio as aioredis
@@ -29,11 +30,32 @@ SCHEDULE_HOURS = list(range(1, 24, 2))
 SCHEDULE_MINUTE = 55
 
 
+async def remove_ore(name):
+    if await r.hexists(f'channel:ore:{name}'):
+        r.delete(f'channel:ore:{name}')
+
+
+async def set_ore(name, time, place):
+    await r.hset(f'channel:ore:{name}', {'time': time, 'place': place})
+
+
+async def get_ores():
+    ore_names = r.keys('channel:ore:*')
+    ores = {}
+
+    for name_key in ore_names:
+        ore = name_key.split(':')[-1]
+        ores[ore] = await r.hgetall(name_key)
+    
+    return ores
+
+
 async def get_channels(guild_id) -> List[str]:
     if await r.sismember('channel:ids', guild_id):
         return await r.hkeys(f'channel:{guild_id}')
     else:
         return []
+
 
 async def load_channels() -> Tuple[List[str]]:
     guild_ids_key = 'channel:ids'
@@ -150,6 +172,8 @@ async def get_authoritative_now(tz_name: str = "Asia/Taipei", http_session: Clie
 
 
 class AnnounceBot(commands.Bot):
+    _noticed = []
+    _reset = ''
     def __init__(self, command_prefix: str = "!", **options):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -209,6 +233,7 @@ class AnnounceBot(commands.Bot):
         return datetime.combine(tomorrow, time(hour=SCHEDULE_HOURS[0], minute=SCHEDULE_MINUTE, second=0), tzinfo=TIMEZONE)
 
     async def _send_sea_announcement(self, run_time: datetime, fish_channels):
+        message = get_bait(run_time)
         for channel_id in fish_channels:
             try:
                 channel = self.get_channel(channel_id)
@@ -220,9 +245,29 @@ class AnnounceBot(commands.Bot):
                 if channel is None:
                     continue
                 timestamp = run_time.astimezone(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
-                message = get_bait(run_time)
                 await channel.send(message)
-                logger.info(f"[Info] sent announcement to {channel_id}")
+                logger.info(f"[Info] sent fish announcement to {channel_id}")
+            except Exception as e:
+                logger.warning(f"[Error] sending to {channel_id}: {e}")
+    
+    async def _send_ore_announcement(self, run_time: datetime, ore_channels):
+        message = get_ore(run_time, await get_ores(), self._noticed, self._reset)
+        if len(message) == 0:
+            return
+        
+        for channel_id in ore_channels:
+            try:
+                channel = self.get_channel(channel_id)
+                if channel is None:
+                    try:
+                        channel = await self.fetch_channel(channel_id)
+                    except Exception:
+                        channel = None
+                if channel is None:
+                    continue
+                timestamp = run_time.astimezone(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
+                await channel.send(message)
+                logger.info(f"[Info] sent ore announcement to {channel_id}")
             except Exception as e:
                 logger.warning(f"[Error] sending to {channel_id}: {e}")
 
@@ -245,7 +290,7 @@ class AnnounceCog(commands.Cog):
     
     @commands.command(
         name="set_ore_announce_channel",
-        help="將此頻道設為海釣公告頻道（需具管理伺服器或管理員權限）"
+        help="將此頻道設為採礦公告頻道（需具管理伺服器或管理員權限）"
     )
     @commands.has_guild_permissions(manage_guild=True)
     async def set_ore_channel(self, ctx: commands.Context):
@@ -298,6 +343,17 @@ class AnnounceCog(commands.Cog):
     )
     async def get_source(self, ctx: commands.Context):
         await ctx.send(get_source())
+    
+    @commands.command(name="set_ore", help="set_ore <name> <time:int> <place>  — 設定或更新一個監控礦物")
+    async def set_ore(self, ctx: commands.Context, name: str, time: int, place: str):
+        await set_ore(name, time, place)
+        await ctx.send(f"已設定 `{name}` => {{'time': {time}, 'place': '{place}'}}。")
+    
+
+    @commands.command(name="remove_ore", help="remove_ore <name>  — 移除監控礦物")
+    async def remove_ore(self, ctx: commands.Context, name: str):
+        await remove_ore(name)
+        await ctx.send(f"已移除 {name} 的礦物監控。")
 
 
 # ---------- 啟動 ----------
