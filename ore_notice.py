@@ -60,7 +60,7 @@ def convert_to_eorzea_time(t: datetime) -> EorzeaTime:
 def get_ore(t: datetime, ores, noticed, reset_date) -> str:
     now_eoz_time = convert_to_eorzea_time(t)
     five_min_eoz_time = convert_to_eorzea_time(t + timedelta(minutes=5))
-    logger.info(f"[Scheduler] [Ore] real now={t.isoformat()}, ero now={now_eoz_time}, next={five_min_eoz_time}")
+    logger.info(f"[Scheduler] [Ore] real now={t.isoformat()}, eor now={now_eoz_time}, next={five_min_eoz_time}")
     if five_min_eoz_time.hour == 0 and five_min_eoz_time.get_date() != reset_date:
         RESET_DATE = five_min_eoz_time.get_date()
         noticed = []
