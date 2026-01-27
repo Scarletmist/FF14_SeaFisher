@@ -179,7 +179,6 @@ class AnnounceBot(commands.Bot):
         intents.message_content = True
         super().__init__(command_prefix=command_prefix, intents=intents, **options)
 
-        self.bg_task_started = False
         self.is_ready = False
 
     async def setup_hook(self):
@@ -196,24 +195,25 @@ class AnnounceBot(commands.Bot):
         logger.info("------")
         self.is_ready = True
     
-    @tasks.loop(minutes=1)
+    @tasks.loop(seconds=10)
     async def ore_background_task(self):
         async with ClientSession() as session:
-            while not self.is_closed():
+            if not self.is_closed():
                 now = await get_authoritative_now(tz_name="Asia/Taipei", http_session=session)
                 next_run = self._next_schedule_after(now)
                 _, ore_channels = await load_channels()
 
-                await self._send_ore_announcement(next_run, ore_channels)
-
+                await self._send_ore_announcement(now, ore_channels)
 
     @tasks.loop(minutes=5)  # task runs every 60 seconds
     async def fish_background_task(self):
         async with ClientSession() as session:
-            while not self.is_closed():
+            if not self.is_closed():
                 now = await get_authoritative_now(tz_name="Asia/Taipei", http_session=session)
                 next_run = self._next_schedule_after(now)
                 wait_seconds = (next_run - now).total_seconds()
+
+                logger.info(f"[Scheduler] [Fish] now={now.isoformat()}, next={next_run.isoformat()}, wait={int(wait_seconds)}s")
 
                 fish_channels, _ = await load_channels()
 
