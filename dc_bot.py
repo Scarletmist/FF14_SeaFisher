@@ -13,11 +13,21 @@ from fish_notice import get_bait, get_source
 from ore_notice import get_ore
 import signal
 import logging
-import redis.asyncio as aioredis
+import redis
 import ntplib
+from redis.retry import Retry
+from redis.backoff import ExponentialBackoff
+from redis.exceptions import BusyLoadingError
 
+retry = Retry(ExponentialBackoff(base=1, cap=10), 3)
 REDIS_URL = os.environ["REDIS_URL"]  # 在 Render Web Service 的 env 設定
-r = aioredis.from_url(REDIS_URL, decode_responses=True)  # decode_responses 方便取回 str
+r = redis.from_url(
+    REDIS_URL, 
+    decode_responses=True, 
+    retry=retry, 
+    retry_on_error=[BusyLoadingError],
+    health_check_interval=5
+)  # decode_responses 方便取回 str
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dc_bot")
@@ -31,28 +41,28 @@ SCHEDULE_MINUTE = 55
 
 
 async def remove_ore(name):
-    if await r.hexists(f'channel:ore:{name}'):
+    if r.exists(f'channel:ore:{name}'):
         r.delete(f'channel:ore:{name}')
 
 
 async def set_ore(name, time, place):
-    await r.hset(f'channel:ore:{name}', mapping={'time': time, 'place': place})
+    r.hset(f'channel:ore:{name}', mapping={'time': time, 'place': place})
 
 
 async def get_ores():
-    ore_names = await r.keys('channel:ore:*')
+    ore_names = r.keys('channel:ore:*')
     ores = {}
 
     for name_key in ore_names:
         ore = name_key.split(':')[-1]
-        ores[ore] = await r.hgetall(name_key)
+        ores[ore] = r.hgetall(name_key)
     
     return ores
 
 
 async def get_channels(guild_id) -> Dict[str, str]:
-    if await r.sismember('channel:ids', guild_id):
-        return await r.hgetall(f'channel:{guild_id}')
+    if r.sismember('channel:ids', guild_id):
+        return r.hgetall(f'channel:{guild_id}')
     else:
         return {}
 
@@ -60,13 +70,13 @@ async def get_channels(guild_id) -> Dict[str, str]:
 async def load_channels() -> Tuple[List[str]]:
     guild_ids_key = 'channel:ids'
 
-    guild_ids = await r.smembers(guild_ids_key)
+    guild_ids = r.smembers(guild_ids_key)
 
     fishes = []
     ores = []
 
     for guild_id in guild_ids:
-        channels = await r.hgetall(f'channel:{guild_id}')
+        channels = r.hgetall(f'channel:{guild_id}')
         for channel_id, channel_type in channels.items():
             if channel_type == 'fish':
                 fishes.append(channel_id)
@@ -77,29 +87,29 @@ async def load_channels() -> Tuple[List[str]]:
 
 
 async def save_channels(guild_id, channel_id, new_type):
-    if await r.sismember('channel:ids', guild_id):
-        old_channels = await r.hgetall(f'channel:{guild_id}')
+    if r.sismember('channel:ids', guild_id):
+        old_channels = r.hgetall(f'channel:{guild_id}')
         new_channels = {}
 
         for c_id, old_type in old_channels.items():
             if old_type != new_type:
                 new_channels[c_id] = old_type
         new_channels[channel_id] = new_type
-        await r.hset(f"channel:{guild_id}", mapping=new_channels)
+        r.hset(f"channel:{guild_id}", mapping=new_channels)
     else:
-        await r.hset(f"channel:{guild_id}", mapping={channel_id: new_type})
-        await r.sadd('channel:ids', guild_id)
+        r.hset(f"channel:{guild_id}", mapping={channel_id: new_type})
+        r.sadd('channel:ids', guild_id)
 
 
 async def remove_channel(guild_id, channel_id):
-    if await r.sismember('channel:ids', guild_id):
-        old_channels = await r.hgetall(f'channel:{guild_id}')
+    if r.sismember('channel:ids', guild_id):
+        old_channels = r.hgetall(f'channel:{guild_id}')
         new_channels = {}
 
         for c_id in old_channels.keys():
             if c_id != channel_id:
                 new_channels[c_id] = old_channels[c_id]
-        await r.hset(f"channel:{guild_id}", mapping=new_channels)
+        r.hset(f"channel:{guild_id}", mapping=new_channels)
 
 
 async def get_authoritative_now(tz_name: str = "Asia/Taipei", http_session: ClientSession = None) -> datetime:
@@ -216,14 +226,8 @@ class AnnounceBot(commands.Bot):
                 logger.info(f"[Scheduler] [Fish] now={now.isoformat()}, next={next_run.isoformat()}, wait={int(wait_seconds)}s")
 
                 fish_channels, _ = await load_channels()
-
-                if wait_seconds <= 300:
-                    try:
-                        await asyncio.sleep(wait_seconds)
-                    except asyncio.CancelledError:
-                        return
-                    
-                    await self._send_sea_announcement(next_run, fish_channels)
+                await asyncio.sleep(wait_seconds)
+                await self._send_sea_announcement(next_run, fish_channels)
 
     @fish_background_task.before_loop
     async def before_fish_task(self):
