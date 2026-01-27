@@ -3,6 +3,9 @@ from datetime import datetime, timezone, timedelta
 import math
 import re
 from typing import Tuple
+import logging
+
+logger = logging.getLogger("dc_bot")
 
 # Eorzea 時間常數（以秒為單位）
 YEAR = 33177600
@@ -55,7 +58,9 @@ def convert_to_eorzea_time(t: datetime) -> EorzeaTime:
 
 
 def get_ore(t: datetime, ores, noticed, reset_date) -> str:
-    five_min_eoz_time = convert_to_eorzea_time(datetime.now() + timedelta(minutes=5))
+    now_eoz_time = convert_to_eorzea_time(t)
+    five_min_eoz_time = convert_to_eorzea_time(t + timedelta(minutes=5))
+    logger.info(f"[Scheduler] [Ore] real now={t.isoformat()}, ero now={now_eoz_time}, next={five_min_eoz_time}")
     if five_min_eoz_time.hour == 0 and five_min_eoz_time.get_date() != reset_date:
         RESET_DATE = five_min_eoz_time.get_date()
         noticed = []
