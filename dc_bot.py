@@ -36,11 +36,11 @@ async def remove_ore(name):
 
 
 async def set_ore(name, time, place):
-    await r.hset(f'channel:ore:{name}', json.dumps({'time': time, 'place': place}))
+    await r.hset(f'channel:ore:{name}', mapping={'time': time, 'place': place})
 
 
 async def get_ores():
-    ore_names = r.keys('channel:ore:*')
+    ore_names = await r.keys('channel:ore:*')
     ores = {}
 
     for name_key in ore_names:
@@ -50,11 +50,11 @@ async def get_ores():
     return ores
 
 
-async def get_channels(guild_id) -> List[str]:
+async def get_channels(guild_id) -> Dict[str, str]:
     if await r.sismember('channel:ids', guild_id):
-        return await r.hkeys(f'channel:{guild_id}')
+        return await r.hgetall(f'channel:{guild_id}')
     else:
-        return []
+        return {}
 
 
 async def load_channels() -> Tuple[List[str]]:
@@ -85,9 +85,9 @@ async def save_channels(guild_id, channel_id, new_type):
             if old_type != new_type:
                 new_channels[c_id] = old_type
         new_channels[channel_id] = new_type
-        await r.hset(f"channel:{guild_id}", json.dumps(new_channels))
+        await r.hset(f"channel:{guild_id}", mapping=new_channels)
     else:
-        await r.hset(f"channel:{guild_id}", json.dumps({channel_id: new_type}))
+        await r.hset(f"channel:{guild_id}", mapping={channel_id: new_type})
         await r.sadd('channel:ids', guild_id)
 
 
@@ -99,7 +99,7 @@ async def remove_channel(guild_id, channel_id):
         for c_id in old_channels.keys():
             if c_id != channel_id:
                 new_channels[c_id] = old_channels[c_id]
-        await r.hset(f"channel:{guild_id}", json.dumps(new_channels))
+        await r.hset(f"channel:{guild_id}", mapping=new_channels)
 
 
 async def get_authoritative_now(tz_name: str = "Asia/Taipei", http_session: ClientSession = None) -> datetime:
@@ -189,24 +189,34 @@ class AnnounceBot(commands.Bot):
         # 在 bot ready 之前把 Cog 加進來
         await self.add_cog(AnnounceCog(self))
 
-        self.my_background_task.start()
+        self.fish_background_task.start()
+        self.ore_background_task.start()
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (id: {self.user.id})")
         logger.info("------")
         self.is_ready = True
-
-    @tasks.loop(minutes=1)  # task runs every 60 seconds
-    async def my_background_task(self):
+    
+    @tasks.loop(minutes=1)
+    async def ore_background_task(self):
         async with ClientSession() as session:
             while not self.is_closed():
                 now = await get_authoritative_now(tz_name="Asia/Taipei", http_session=session)
-                logger.info(f"NOW: {now}")
+                next_run = self._next_schedule_after(now)
+                _, ore_channels = await load_channels()
+
+                await self._send_ore_announcement(next_run, ore_channels)
+
+
+    @tasks.loop(minutes=5)  # task runs every 60 seconds
+    async def fish_background_task(self):
+        async with ClientSession() as session:
+            while not self.is_closed():
+                now = await get_authoritative_now(tz_name="Asia/Taipei", http_session=session)
                 next_run = self._next_schedule_after(now)
                 wait_seconds = (next_run - now).total_seconds()
-                logger.info(f"[Scheduler] now={now.isoformat()}, next={next_run.isoformat()}, wait={int(wait_seconds)}s")
 
-                fish_channels, ore_channels = await load_channels()
+                fish_channels, _ = await load_channels()
 
                 if wait_seconds <= 300:
                     try:
@@ -216,9 +226,13 @@ class AnnounceBot(commands.Bot):
                     
                     await self._send_sea_announcement(next_run, fish_channels)
 
-    @my_background_task.before_loop
-    async def before_my_task(self):
+    @fish_background_task.before_loop
+    async def before_fish_task(self):
         await self.wait_until_ready()  # wait until the bot logs in
+    
+    @ore_background_task.before_loop
+    async def before_ore_task(self):
+        await self.wait_until_ready()
 
     def _next_schedule_after(self, now: datetime) -> datetime:
         today = now.date()
@@ -323,6 +337,7 @@ class AnnounceCog(commands.Cog):
         channels = await get_channels(guild_id)
         messages = []
         type_mapping = {'fish': '海釣', 'ore': '採礦'}
+        print(channels)
         for channel_id, notice_type in channels.items():
             messages.append(f"目前本伺服器的{type_mapping[notice_type]}公告頻道為 <#{channel_id}> 。")
         if channel_id:
@@ -352,14 +367,14 @@ class AnnounceCog(commands.Cog):
     @commands.command(name="remove_ore", help="remove_ore <name>  — 移除監控礦物")
     async def remove_ore(self, ctx: commands.Context, name: str):
         await remove_ore(name)
-        await ctx.send(f"已移除 {name} 的礦物監控。")
+        await ctx.send(f"已移除 `{name}` 的礦物監控。")
     
     @commands.command(name="list_ore", help="檢視所有監控礦物")
     async def list_ore(self, ctx: commands.Context):
         ores = await get_ores()
         messages = ["目前監控礦物:"]
         for ore, ore_info in ores.items():
-            messages.append(f"已設定 `{ore}` => {{'time': {ore_info['time']}, 'place': '{ore_info['place']}'}}。")
+            messages.append(f"已設定 `{ore}` => 採集時間: `{ore_info['time']}` , 採集地區: `{ore_info['place']}`。")
         await ctx.send("\n".join(messages))
 
 
