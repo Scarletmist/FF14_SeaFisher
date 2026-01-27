@@ -179,18 +179,17 @@ class AnnounceBot(commands.Bot):
         intents.message_content = True
         super().__init__(command_prefix=command_prefix, intents=intents, **options)
 
-        # background task
-        self._scheduler_task: Optional[asyncio.Task] = None
         self.bg_task_started = False
         self.is_ready = False
 
     async def setup_hook(self):
         logger.info("SETUP HOOK")
-        # 在 bot ready 之前把 Cog 加進來
-        await self.add_cog(AnnounceCog(self))
 
         self.fish_background_task.start()
         self.ore_background_task.start()
+
+        # 在 bot ready 之前把 Cog 加進來
+        await self.add_cog(AnnounceCog(self))
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (id: {self.user.id})")
