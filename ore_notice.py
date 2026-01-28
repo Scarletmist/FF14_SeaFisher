@@ -31,8 +31,8 @@ class EorzeaTime:
     def __str__(self) -> str:
         return f"{self.year}-{self.month:02d}-{self.day:02d} {self.hour:02d}:{self.minute:02d}:{self.second:02d}"
 
-    def get_date(self) -> str:
-        return f"{self.year}{self.month:02d}{self.day:02d}"
+    def get_datehour(self) -> str:
+        return f"{self.year}{self.month:02d}{self.day:02d}{self.hour:02d}"
 
 def _zero_pad(value: int) -> str:
     """回傳二位數字字串（不足補 0）"""
@@ -57,27 +57,16 @@ def convert_to_eorzea_time(t: datetime) -> EorzeaTime:
     return EorzeaTime(year=year, month=month, day=day, hour=hour, minute=minute, second=second)
 
 
-def get_ore(t: datetime, ores, noticed, reset_date) -> str:
-    now_eoz_time = convert_to_eorzea_time(t)
-    five_min_eoz_time = convert_to_eorzea_time(t + timedelta(minutes=5))
-    logger.info(f"[Scheduler] [Ore] real now={t.isoformat()}, eor now={now_eoz_time}, next={five_min_eoz_time}")
-    if five_min_eoz_time.hour == 0 and five_min_eoz_time.get_date() != reset_date:
-        RESET_DATE = five_min_eoz_time.get_date()
-        noticed = []
+def get_ore(t: EorzeaTime, ores) -> str:
+    messages = []
 
-    if five_min_eoz_time.hour not in noticed:
-        noticed.append(five_min_eoz_time.hour)
-        messages = []
-
-        for ore, ore_info in ores.items():
-            if int(ore_info['time']) == five_min_eoz_time.hour:
-                messages.append(f'{ore} ( {ore_info["place"]} )')
-        
-        if len(messages) > 0:
-            messages.insert(0, '限時礦物:')
-            return '\n'.join(messages)
-        else:
-            return ''
+    for ore, ore_info in ores.items():
+        if int(ore_info['time']) == t.hour:
+            messages.append(f'{ore} ( {ore_info["place"]} )')
+    
+    if len(messages) > 0:
+        messages.insert(0, '限時礦物:')
+        return '\n'.join(messages)
     else:
         return ''
 
@@ -88,4 +77,4 @@ TEST_ORE = {
         'place': 'test'
     }
 }
-print(get_ore(datetime.now(), TEST_ORE, [], ''))
+print(get_ore(datetime.now(), TEST_ORE))
