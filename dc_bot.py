@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import os
 from typing import Dict, Optional, Tuple, List
 from fish_notice import get_bait, get_source
-from ore_notice import get_ore
+from ore_notice import get_ore, convert_to_eorzea_time, EorzeaTime
 import signal
 import logging
 import redis
@@ -20,7 +20,7 @@ from redis.backoff import ExponentialBackoff
 from redis.exceptions import BusyLoadingError
 
 retry = Retry(ExponentialBackoff(base=1, cap=10), 3)
-REDIS_URL = os.environ["REDIS_URL"]  # 在 Render Web Service 的 env 設定
+REDIS_URL = os.getenv("REDIS_URL")  # 在 Render Web Service 的 env 設定
 r = redis.from_url(
     REDIS_URL, 
     decode_responses=True, 
@@ -183,7 +183,9 @@ async def get_authoritative_now(tz_name: str = "Asia/Taipei", http_session: Clie
 
 class AnnounceBot(commands.Bot):
     _noticed = []
-    _reset = ''
+    _is_ore_run = False
+    _is_fish_run = False
+
     def __init__(self, command_prefix: str = "!", **options):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -207,27 +209,58 @@ class AnnounceBot(commands.Bot):
     
     @tasks.loop(seconds=10)
     async def ore_background_task(self):
-        async with ClientSession() as session:
-            if not self.is_closed():
-                now = await get_authoritative_now(tz_name="Asia/Taipei", http_session=session)
-                next_run = self._next_schedule_after(now)
-                _, ore_channels = await load_channels()
+        if self._is_ore_run:
+            return
+        self._is_ore_run = True
 
-                await self._send_ore_announcement(now, ore_channels)
+        try:
+            async with ClientSession() as session:
+                if not self.is_closed():
+                    now = await get_authoritative_now(tz_name="Asia/Taipei", http_session=session)
+                    eorz_now = convert_to_eorzea_time(now)
+                    eorz_5min = convert_to_eorzea_time(now + timedelta(minutes=5))
+                    _, ore_channels = await load_channels()
+
+                    logger.info(f"[Scheduler] [Ore] real now={now.isoformat()}, eor now={eorz_now}, check={eorz_5min}")
+                    logger.info(f"{",".join(self._noticed)}")
+
+                    if eorz_5min.get_datehour() not in self._noticed:
+                        if len(self._noticed) > 20:
+                            self._noticed.pop(0)
+                        self._noticed.append(eorz_5min.get_datehour())
+
+                    await self._send_ore_announcement(eorz_5min, ore_channels)
+        
+        except Exception as ex:
+            logger.error(ex)
+
+        finally:
+            self._is_ore_run = False
 
     @tasks.loop(minutes=5)  # task runs every 60 seconds
     async def fish_background_task(self):
-        async with ClientSession() as session:
-            if not self.is_closed():
-                now = await get_authoritative_now(tz_name="Asia/Taipei", http_session=session)
-                next_run = self._next_schedule_after(now)
-                wait_seconds = (next_run - now).total_seconds()
+        if self._is_fish_run:
+            return
+        self._is_fish_run = True
 
-                logger.info(f"[Scheduler] [Fish] now={now.isoformat()}, next={next_run.isoformat()}, wait={int(wait_seconds)}s")
+        try:
+            async with ClientSession() as session:
+                if not self.is_closed():
+                    now = await get_authoritative_now(tz_name="Asia/Taipei", http_session=session)
+                    next_run = self._next_schedule_after(now)
+                    wait_seconds = (next_run - now).total_seconds()
 
-                fish_channels, _ = await load_channels()
-                await asyncio.sleep(wait_seconds)
-                await self._send_sea_announcement(next_run, fish_channels)
+                    logger.info(f"[Scheduler] [Fish] now={now.isoformat()}, next={next_run.isoformat()}, wait={int(wait_seconds)}s")
+
+                    fish_channels, _ = await load_channels()
+                    await asyncio.sleep(wait_seconds)
+                    await self._send_sea_announcement(next_run, fish_channels)
+
+        except Exception as ex:
+            logger.error(ex)
+
+        finally:
+            self._is_fish_run = False
 
     @fish_background_task.before_loop
     async def before_fish_task(self):
@@ -267,8 +300,8 @@ class AnnounceBot(commands.Bot):
             except Exception as e:
                 logger.warning(f"[Error] sending to {channel_id}: {e}")
     
-    async def _send_ore_announcement(self, run_time: datetime, ore_channels):
-        message = get_ore(run_time, await get_ores(), self._noticed, self._reset)
+    async def _send_ore_announcement(self, fivemin_time: EorzeaTime, ore_channels):
+        message = get_ore(fivemin_time, await get_ores())
         if len(message) == 0:
             return
         
