@@ -13,23 +13,138 @@ from fish_notice import get_bait, get_source
 from ore_notice import get_ore, convert_to_eorzea_time, EorzeaTime
 import signal
 import logging
-import redis
 import ntplib
+import redis.asyncio as aioredis
 from redis.retry import Retry
 from redis.backoff import ExponentialBackoff
-from redis.exceptions import BusyLoadingError
+from redis.exceptions import BusyLoadingError, ConnectionError as RedisConnectionError
+import time as st
 
-retry = Retry(ExponentialBackoff(base=1, cap=10), 3)
+_retry = Retry(ExponentialBackoff(base=1, cap=10), 3)
 REDIS_URL = os.getenv("REDIS_URL")  # 在 Render Web Service 的 env 設定
-r = redis.from_url(
-    REDIS_URL, 
-    decode_responses=True, 
-    retry=retry, 
-    retry_on_error=[BusyLoadingError],
-    health_check_interval=5
-)  # decode_responses 方便取回 str
 
-logging.basicConfig(level=logging.INFO)
+
+class RedisWrapper:
+    def __init__(
+        self,
+        url: str,
+        decode_responses: bool = True,
+        retry: Optional[Retry] = _retry,
+        retry_on_error: Optional[list] = None,
+        health_check_interval: int = 5,
+        socket_timeout: float = 5.0,
+        socket_connect_timeout: float = 5.0,
+    ):
+        self.url = url
+        self.decode_responses = decode_responses
+        self.retry = retry
+        self.retry_on_error = retry_on_error or [BusyLoadingError]
+        self.health_check_interval = health_check_interval
+        self.socket_timeout = socket_timeout
+        self.socket_connect_timeout = socket_connect_timeout
+
+        self._client: Optional[aioredis.Redis] = None
+        self._lock = asyncio.Lock()
+        self._logger = logging.getLogger("redis_wrapper")
+
+    async def connect(self):
+        """(re)create the redis async client. Protected by lock."""
+        async with self._lock:
+            if self._client is not None:
+                # quick health check
+                try:
+                    await self._client.ping()
+                    return
+                except Exception:
+                    try:
+                        await self._client.close()
+                        await self._client.connection_pool.disconnect()
+                    except Exception:
+                        pass
+                    self._client = None
+
+            # create new client
+            # note: you can add ssl=True or other kwargs if needed
+            self._logger.info("Creating new redis client")
+            self._client = aioredis.from_url(
+                self.url,
+                decode_responses=self.decode_responses,
+                retry=self.retry,
+                retry_on_error=self.retry_on_error,
+                health_check_interval=self.health_check_interval,
+                socket_timeout=self.socket_timeout,
+                socket_connect_timeout=self.socket_connect_timeout,
+            )
+
+            # do an initial ping to ensure connection established
+            try:
+                await self._client.ping()
+            except Exception as e:
+                # close and raise upward
+                try:
+                    await self._client.close()
+                    await self._client.connection_pool.disconnect()
+                except Exception:
+                    pass
+                self._client = None
+                raise
+
+    async def _ensure_client(self):
+        if self._client is None:
+            await self.connect()
+
+    async def execute(self, method: str, *args, retries: int = 3, **kwargs) -> Any:
+        """Generic executor: does limited retries and will reconnect on connection errors."""
+        backoff = 1.0
+        for attempt in range(1, retries + 1):
+            try:
+                await self._ensure_client()
+                func = getattr(self._client, method)
+                return await func(*args, **kwargs)
+            except RedisConnectionError as e:
+                self._logger.warning("Redis connection error on %s attempt %s: %s", method, attempt, e, exc_info=True)
+                # try reconnect
+                try:
+                    # force reconnect
+                    async with self._lock:
+                        if self._client:
+                            try:
+                                await self._client.close()
+                                await self._client.connection_pool.disconnect()
+                            except Exception:
+                                pass
+                        self._client = None
+                        # small sleep before reconnect to avoid tight loop
+                        await asyncio.sleep(backoff)
+                        backoff = min(backoff * 2, 30)
+                        # next loop will call connect()
+                except Exception:
+                    # ignore
+                    pass
+                # continue retry
+                continue
+            except Exception as e:
+                # non-connection error -> rethrow
+                self._logger.exception("Redis operation %s raised unexpected exception", method)
+                raise
+        # after attempts exhausted
+        raise RedisConnectionError(f"Redis operation {method} failed after {retries} attempts")
+
+    # convenience wrappers
+    async def smembers(self, *args, **kwargs): return await self.execute("smembers", *args, **kwargs)
+    async def hgetall(self, *args, **kwargs): return await self.execute("hgetall", *args, **kwargs)
+    async def keys(self, *args, **kwargs): return await self.execute("keys", *args, **kwargs)
+    async def exists(self, *args, **kwargs): return await self.execute("exists", *args, **kwargs)
+    async def delete(self, *args, **kwargs): return await self.execute("delete", *args, **kwargs)
+    async def hset(self, *args, **kwargs): return await self.execute("hset", *args, **kwargs)
+    async def sadd(self, *args, **kwargs): return await self.execute("sadd", *args, **kwargs)
+    async def ping(self, *args, **kwargs): return await self.execute("ping", *args, **kwargs)
+    # add other methods you use similarly...
+
+# create wrapper instance once
+redis_wrapper = RedisWrapper(REDIS_URL)
+
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("dc_bot")
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -41,96 +156,107 @@ SCHEDULE_MINUTE = 55
 
 
 async def remove_ore(name):
-    if r.exists(f'channel:ore:{name}'):
-        r.delete(f'channel:ore:{name}')
+    if await redis_wrapper.exists(f'channel:ore:{name}'):
+        await redis_wrapper.delete(f'channel:ore:{name}')
 
 
 async def set_ore(name, time, place):
-    r.hset(f'channel:ore:{name}', mapping={'time': time, 'place': place})
+    await redis_wrapper.hset(f'channel:ore:{name}', mapping={'time': time, 'place': place})
 
 
 async def get_ores():
-    ore_names = r.keys('channel:ore:*')
+    ore_names = await redis_wrapper.keys('channel:ore:*')
     ores = {}
 
     for name_key in ore_names:
         ore = name_key.split(':')[-1]
-        ores[ore] = r.hgetall(name_key)
+        ores[ore] = await redis_wrapper.hgetall(name_key)
     
     return ores
 
 
 async def get_channels(guild_id) -> Dict[str, str]:
-    if r.sismember('channel:ids', guild_id):
-        return r.hgetall(f'channel:{guild_id}')
+    if await redis_wrapper.sismember('channel:ids', guild_id):
+        return await redis_wrapper.hgetall(f'channel:{guild_id}')
     else:
         return {}
 
 
 async def load_channels() -> Tuple[List[str]]:
     guild_ids_key = 'channel:ids'
-
-    guild_ids = r.smembers(guild_ids_key)
+    try:
+        guild_ids = await redis_wrapper.smembers(guild_ids_key)
+    except Exception as e:
+        logger.exception("Failed to fetch guild ids from redis. Attempt reconnect and return empty lists.")
+        # 可選：嘗試再連一次
+        try:
+            await redis_wrapper.connect()
+            guild_ids = await redis_wrapper.smembers(guild_ids_key)
+        except Exception:
+            logger.exception("Reconnect attempt failed")
+            return [], []
 
     fishes = []
     ores = []
 
-    for guild_id in guild_ids:
-        channels = r.hgetall(f'channel:{guild_id}')
-        for channel_id, channel_type in channels.items():
-            if channel_type == 'fish':
-                fishes.append(channel_id)
-            else:
-                ores.append(channel_id)
-        
+    for guild_id in guild_ids or []:
+        try:
+            channels = await redis_wrapper.hgetall(f'channel:{guild_id}')
+            for channel_id, channel_type in channels.items():
+                if channel_type == 'fish':
+                    fishes.append(channel_id)
+                else:
+                    ores.append(channel_id)
+        except Exception:
+            logger.exception("Error reading channels for guild %s; skip", guild_id)
+            continue
+
     return fishes, ores
 
 
 async def save_channels(guild_id, channel_id, new_type):
-    if r.sismember('channel:ids', guild_id):
-        old_channels = r.hgetall(f'channel:{guild_id}')
+    if await redis_wrapper.sismember('channel:ids', guild_id):
+        old_channels = await redis_wrapper.hgetall(f'channel:{guild_id}')
         new_channels = {}
 
         for c_id, old_type in old_channels.items():
             if old_type != new_type:
                 new_channels[c_id] = old_type
         new_channels[channel_id] = new_type
-        r.hset(f"channel:{guild_id}", mapping=new_channels)
+        await redis_wrapper.hset(f"channel:{guild_id}", mapping=new_channels)
     else:
-        r.hset(f"channel:{guild_id}", mapping={channel_id: new_type})
-        r.sadd('channel:ids', guild_id)
+        await redis_wrapper.hset(f"channel:{guild_id}", mapping={channel_id: new_type})
+        await redis_wrapper.sadd('channel:ids', guild_id)
 
 
 async def remove_channel(guild_id, channel_id):
-    if r.sismember('channel:ids', guild_id):
-        old_channels = r.hgetall(f'channel:{guild_id}')
+    if await redis_wrapper.sismember('channel:ids', guild_id):
+        old_channels = await redis_wrapper.hgetall(f'channel:{guild_id}')
         new_channels = {}
 
         for c_id in old_channels.keys():
             if c_id != channel_id:
                 new_channels[c_id] = old_channels[c_id]
-        r.hset(f"channel:{guild_id}", mapping=new_channels)
+        await redis_wrapper.hset(f"channel:{guild_id}", mapping=new_channels)
 
 
 async def get_authoritative_now(tz_name: str = "Asia/Taipei", http_session: ClientSession = None) -> datetime:
     """
-    優先使用 worldtimeapi -> timeapi.io -> ntplib -> 系統時間 的順序取得現在時間（返回 timezone-aware datetime）。
-    這個函式是 async，可在排程 loop 中呼叫。
+    優先使用 worldtimeapi -> timeapi.io -> ntplib -> 系統時間 的順序取得現在時間
+    返回 timezone-aware datetime。
     """
-    # prefer reusing session if provided
     close_session = False
     if http_session is None:
         http_session = ClientSession(timeout=ClientTimeout(total=5))
         close_session = True
 
     try:
-        # 1) try worldtimeapi (returns datetime with offset)
+        # 1) worldtimeapi
         try:
             url = f"https://worldtimeapi.org/api/timezone/{tz_name}"
-            async with http_session.get(url) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    # example field: 'datetime': '2026-01-14T11:55:05.140304+08:00'
+            async with http_session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
                     dt_str = data.get("datetime")
                     if dt_str:
                         dt = datetime.fromisoformat(dt_str)
@@ -139,32 +265,26 @@ async def get_authoritative_now(tz_name: str = "Asia/Taipei", http_session: Clie
             # swallow and try next
             pass
 
-        # 2) try timeapi.io (some endpoints return dateTime without TZ, we'll attach tz)
+        # 2) timeapi.io
         try:
             url2 = f"https://timeapi.io/api/time/current/zone?timeZone={tz_name}"
-            async with http_session.get(url2) as r2:
-                if r2.status == 200:
-                    j = await r2.json()
+            async with http_session.get(url2) as resp2:
+                if resp2.status == 200:
+                    j = await resp2.json()
                     dt_str = j.get("dateTime") or j.get("dateTimeRaw") or j.get("dateTimeUTC")
-                    # if returns e.g. "2025-02-10T22:20:16.6476606" without offset, attach tz
                     if dt_str:
-                        try:
-                            dt = datetime.fromisoformat(dt_str)
-                            # if dt has no tzinfo, attach desired tz
-                            if dt.tzinfo is None:
-                                dt = dt.replace(tzinfo=ZoneInfo(tz_name))
-                            return dt
-                        except Exception:
-                            pass
+                        dt = datetime.fromisoformat(dt_str)
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=ZoneInfo(tz_name))
+                        return dt
         except Exception:
             pass
 
-        # 3) try NTP (blocking) via executor (ntplib not async)
+        # 3) NTP via executor (ntplib is blocking)
         try:
             loop = asyncio.get_running_loop()
             def ntp_query():
                 c = ntplib.NTPClient()
-                # use pool.ntp.org
                 resp = c.request("pool.ntp.org", version=3, timeout=5)
                 return datetime.fromtimestamp(resp.tx_time, tz=timezone.utc).astimezone(ZoneInfo(tz_name))
             dt_ntp = await loop.run_in_executor(None, ntp_query)
@@ -172,10 +292,8 @@ async def get_authoritative_now(tz_name: str = "Asia/Taipei", http_session: Clie
         except Exception:
             pass
 
-        # 4) fallback to system clock (with tz)
-        now_sys = datetime.now(tz=ZoneInfo(tz_name))
-        return now_sys
-
+        # 4) fallback to system clock
+        return datetime.now(tz=ZoneInfo(tz_name))
     finally:
         if close_session:
             await http_session.close()
@@ -189,6 +307,7 @@ class AnnounceBot(commands.Bot):
     def __init__(self, command_prefix: str = "!", **options):
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.voice_states = False
         super().__init__(command_prefix=command_prefix, intents=intents, **options)
 
         self.is_ready = False
@@ -207,42 +326,34 @@ class AnnounceBot(commands.Bot):
         logger.info("------")
         self.is_ready = True
     
-    @tasks.loop(seconds=10)
+    @tasks.loop(seconds=30)
     async def ore_background_task(self):
-        if self._is_ore_run:
-            return
-        self._is_ore_run = True
-
         try:
+            # 每次進入這個 coroutine 都做一次完整檢查 -> tasks.loop 會在下一個 minute 再呼叫
             async with ClientSession() as session:
-                if not self.is_closed():
-                    now = await get_authoritative_now(tz_name="Asia/Taipei", http_session=session)
-                    eorz_now = convert_to_eorzea_time(now)
-                    eorz_5min = convert_to_eorzea_time(now + timedelta(minutes=5))
-                    _, ore_channels = await load_channels()
+                now = await get_authoritative_now(tz_name="Asia/Taipei", http_session=session)
+                eorz_now = convert_to_eorzea_time(now)
+                eorz_5min = convert_to_eorzea_time(now + timedelta(minutes=5))
+                _, ore_channels = await load_channels()
 
-                    logger.info(f"[Scheduler] [Ore] real now={now.isoformat()}, eor now={eorz_now}, check={eorz_5min}")
-                    logger.info(f"{",".join(self._noticed)}")
+                logger.info(f"[Scheduler] [Ore] real now={now.isoformat()}, eor now={eorz_now}, check={eorz_5min}")
+                logger.debug(f"noticed list: {self._noticed}")
 
-                    if eorz_5min.get_datehour() not in self._noticed:
-                        if len(self._noticed) > 20:
-                            self._noticed.pop(0)
-                        self._noticed.append(eorz_5min.get_datehour())
-
+                # 若還沒通知過此 eor 時段 -> 發送並記錄
+                if eorz_5min.get_datehour() not in self._noticed:
+                    if len(self._noticed) > 5:  # 多久的歷史要保留視需求調整
+                        self._noticed.pop(0)
+                    self._noticed.append(eorz_5min.get_datehour())
                     await self._send_ore_announcement(eorz_5min, ore_channels)
-        
-        except Exception as ex:
-            logger.error(ex)
 
-        finally:
-            self._is_ore_run = False
+        except asyncio.CancelledError:
+            # 被取消，向上丟出讓 tasks.loop 處理 (或在監護邏輯中重啟)
+            raise
+        except Exception:
+            logger.exception("Exception in ore_background_task")
 
-    @tasks.loop(minutes=5)  # task runs every 60 seconds
+    @tasks.loop(minutes=5)
     async def fish_background_task(self):
-        if self._is_fish_run:
-            return
-        self._is_fish_run = True
-
         try:
             async with ClientSession() as session:
                 if not self.is_closed():
@@ -253,14 +364,13 @@ class AnnounceBot(commands.Bot):
                     logger.info(f"[Scheduler] [Fish] now={now.isoformat()}, next={next_run.isoformat()}, wait={int(wait_seconds)}s")
 
                     fish_channels, _ = await load_channels()
-                    await asyncio.sleep(wait_seconds)
-                    await self._send_sea_announcement(next_run, fish_channels)
+
+                    if wait_seconds <= 300:
+                        await asyncio.sleep(wait_seconds)
+                        await self._send_sea_announcement(next_run, fish_channels)
 
         except Exception as ex:
-            logger.error(ex)
-
-        finally:
-            self._is_fish_run = False
+            logger.exception(ex)
 
     @fish_background_task.before_loop
     async def before_fish_task(self):
@@ -315,11 +425,19 @@ class AnnounceBot(commands.Bot):
                         channel = None
                 if channel is None:
                     continue
-                timestamp = run_time.astimezone(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
                 await channel.send(message)
                 logger.info(f"[Info] sent ore announcement to {channel_id}")
             except Exception as e:
                 logger.warning(f"[Error] sending to {channel_id}: {e}")
+    
+    async def on_disconnect(self):
+        logger.warning("on_disconnect called")
+
+    async def on_resumed(self):
+        logger.info("on_resumed called")
+
+    async def on_error(self, event, *args, **kwargs):
+        logger.exception("on_error: %s", event)
 
 
 # ----- 將命令放在 Cog 裡 -----
@@ -347,7 +465,7 @@ class AnnounceCog(commands.Cog):
         guild_id = str(ctx.guild.id)
         channel_id = ctx.channel.id
         await save_channels(guild_id, channel_id, 'ore')
-        await ctx.send(f"已將此頻道 <#{channel_id}> 設為本伺服器採礦的公告頻道。")
+        await ctx.send(f"已將此頻道 <#{channel_id}> 設為本伺服器採集的公告頻道。")
 
     @commands.command(
         name="unset_announce_channel",
@@ -372,7 +490,7 @@ class AnnounceCog(commands.Cog):
         guild_id = str(ctx.guild.id)
         channels = await get_channels(guild_id)
         messages = []
-        type_mapping = {'fish': '海釣', 'ore': '採礦'}
+        type_mapping = {'fish': '海釣', 'ore': '採集'}
         print(channels)
         for channel_id, notice_type in channels.items():
             messages.append(f"目前本伺服器的{type_mapping[notice_type]}公告頻道為 <#{channel_id}> 。")
@@ -396,19 +514,19 @@ class AnnounceCog(commands.Cog):
         await ctx.send(get_source())
     
     @commands.command(name="set_ore", help="set_ore <name> <time:int> <place>  — 設定或更新一個監控礦物")
-    async def set_ore(self, ctx: commands.Context, name: str, time: int, place: str):
+    async def set_ore(self, ctx: commands.Context, name: str, time: str, place: str):
         await set_ore(name, time, place)
         await ctx.send(f"已設定 `{name}` => {{'time': {time}, 'place': '{place}'}}。")
 
-    @commands.command(name="remove_ore", help="remove_ore <name>  — 移除監控礦物")
+    @commands.command(name="remove_ore", help="remove_ore <name>  — 移除監控採集")
     async def remove_ore(self, ctx: commands.Context, name: str):
         await remove_ore(name)
-        await ctx.send(f"已移除 `{name}` 的礦物監控。")
+        await ctx.send(f"已移除 `{name}` 的採集監控。")
     
-    @commands.command(name="list_ore", help="檢視所有監控礦物")
+    @commands.command(name="list_ore", help="檢視所有監控採集")
     async def list_ore(self, ctx: commands.Context):
         ores = await get_ores()
-        messages = ["目前監控礦物:"]
+        messages = ["目前監控採集:"]
         for ore, ore_info in ores.items():
             messages.append(f"已設定 `{ore}` => 採集時間: `{ore_info['time']}` , 採集地區: `{ore_info['place']}`。")
         await ctx.send("\n".join(messages))
@@ -456,6 +574,8 @@ async def main():
     shutdown_event = asyncio.Event()
 
     bot = AnnounceBot(command_prefix="？")
+
+    await redis_wrapper.connect()
 
     # Unix: 把 SIGINT/SIGTERM 與 event 連結
     for s in (signal.SIGINT, signal.SIGTERM):
