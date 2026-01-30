@@ -57,15 +57,20 @@ def convert_to_eorzea_time(t: datetime) -> EorzeaTime:
     return EorzeaTime(year=year, month=month, day=day, hour=hour, minute=minute, second=second)
 
 
-def get_ore(t: EorzeaTime, ores) -> str:
+def get_ore(et: EorzeaTime, ores) -> str:
     messages = []
 
     for ore, ore_info in ores.items():
-        if int(ore_info['time']) == t.hour:
+        if ',' in str(ore_info['time']):
+            for t in ore_info['time'].split(','):
+                if int(t) == et.hour:
+                    messages.append(f'{ore} ( {ore_info["place"]} )')
+        elif int(ore_info['time']) == et.hour:
             messages.append(f'{ore} ( {ore_info["place"]} )')
     
     if len(messages) > 0:
-        messages.insert(0, '限時礦物:')
+        messages.insert(0, '5分鐘後限時採集:')
+        messages.insert(1, f'採集時間--{et.hour:02d}:00')
         return '\n'.join(messages)
     else:
         return ''
