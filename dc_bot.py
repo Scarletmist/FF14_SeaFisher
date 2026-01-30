@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, time, timezone
 from zoneinfo import ZoneInfo
 import os
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List, Any
 from fish_notice import get_bait, get_source
 from ore_notice import get_ore, convert_to_eorzea_time, EorzeaTime
 import signal
