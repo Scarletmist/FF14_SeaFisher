@@ -21,7 +21,7 @@ from redis.exceptions import BusyLoadingError, ConnectionError as RedisConnectio
 import time as st
 
 _retry = Retry(ExponentialBackoff(base=1, cap=10), 3)
-REDIS_URL = os.getenv("REDIS_URL")  # 在 Render Web Service 的 env 設定
+REDIS_URL = os.getenv("REDIS_URL", "rediss://red-d5msqk56ubrc73aes19g:Kl0cDpmkEMnEaBqEI8peXG7fZtIe4xTB@oregon-keyvalue.render.com:6379")  # 在 Render Web Service 的 env 設定
 
 
 class RedisWrapper:
@@ -132,6 +132,7 @@ class RedisWrapper:
 
     # convenience wrappers
     async def smembers(self, *args, **kwargs): return await self.execute("smembers", *args, **kwargs)
+    async def sismember(self, *args, **kwargs): return await self.execute("sismember", *args, **kwargs)
     async def hgetall(self, *args, **kwargs): return await self.execute("hgetall", *args, **kwargs)
     async def keys(self, *args, **kwargs): return await self.execute("keys", *args, **kwargs)
     async def exists(self, *args, **kwargs): return await self.execute("exists", *args, **kwargs)
@@ -476,7 +477,7 @@ class AnnounceCog(commands.Cog):
         guild_id = str(ctx.guild.id)
         channels = await get_channels(guild_id)
         channel_id = ctx.channel.id
-        if channel_id in channels:
+        if str(channel_id) in channels:
             await remove_channel(guild_id, channel_id)
             await ctx.send("已取消此頻道 <#{channel_id}> 的公告頻道設定。")
         else:
