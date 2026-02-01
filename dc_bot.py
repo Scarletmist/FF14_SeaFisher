@@ -20,6 +20,10 @@ from redis.retry import Retry
 from redis.backoff import ExponentialBackoff
 from redis.exceptions import BusyLoadingError, ConnectionError as RedisConnectionError
 import time as st
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 _retry = Retry(ExponentialBackoff(base=1, cap=10), 3)
 REDIS_URL = os.getenv("REDIS_URL", "rediss://red-d5msqk56ubrc73aes19g:Kl0cDpmkEMnEaBqEI8peXG7fZtIe4xTB@oregon-keyvalue.render.com:6379")  # 在 Render Web Service 的 env 設定
