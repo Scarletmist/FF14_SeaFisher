@@ -13,6 +13,7 @@ from fish_notice import get_bait, get_source
 from ore_notice import get_ore, convert_to_eorzea_time, EorzeaTime
 import signal
 import logging
+from logging.handlers import TimedRotatingFileHandler
 import ntplib
 import redis.asyncio as aioredis
 from redis.retry import Retry
@@ -145,8 +146,38 @@ class RedisWrapper:
 # create wrapper instance once
 redis_wrapper = RedisWrapper(REDIS_URL)
 
+LOG_DIR = "logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+log_path = os.path.join(LOG_DIR, "app.log")
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("dc_bot")
+
+# 每天午夜切檔 (when='midnight'), 保留 10 個備份檔案 (backupCount=10)
+handler = TimedRotatingFileHandler(
+    filename=log_path,
+    when="midnight",
+    interval=1,
+    backupCount=10,
+    encoding="utf-8",
+    delay=False,   # 若想要到第一筆 log 再建立檔案，設 True
+    utc=False      # 若希望以 UTC 切檔可改成 True
+)
+
+# 調整滾動檔案名稱樣式（預設會像 app.log.2026-02-02）
+handler.suffix = "%Y-%m-%d"
+
+formatter = logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+handler.setFormatter(formatter)
+
+logger.addHandler(handler)
+
+# 也可以同時在 console 印出
+console = logging.StreamHandler()
+console.setFormatter(formatter)
+logger.addHandler(console)
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 PORT = int(os.environ.get("PORT", 10000))  # Render 會提供 PORT
