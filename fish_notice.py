@@ -200,6 +200,7 @@ def get_bait(rawDate: datetime=datetime.now(tz=ZoneInfo("Asia/Taipei"))):
     messages.append(f'航線時間: {targetDate.strftime("%Y/%m/%d %H:%M")}')
 
     for fish_route_time in (near_route_time, far_route_time):
+        messages.append('=' * 28)
         if fish_route_time == near_route_time:
             messages.append('(近海航線)')
         else:
@@ -221,7 +222,7 @@ def get_bait(rawDate: datetime=datetime.now(tz=ZoneInfo("Asia/Taipei"))):
                     messages.append(f'       魚餌取得方式: {BAIT_SOURCE[orola["BAIT"]]}')
                 if "KING_BAIT" in orola and orola['KING_BAIT'] in BAIT_SOURCE:
                     messages.append(f'       魚餌取得方式: {BAIT_SOURCE[orola["KING_BAIT"]]}')
-            messages.append('=' * 20)
+            messages.append('=' * 28)
     
     return "\n".join(messages)
 
