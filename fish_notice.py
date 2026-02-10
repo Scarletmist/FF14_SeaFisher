@@ -210,6 +210,7 @@ def get_bait(rawDate: datetime=datetime.now(tz=ZoneInfo("Asia/Taipei"))):
         time_index = TIME_LIST.index(time)
 
         for i in range(3):
+            messages.append('=' * 20)
             area = AREA_MAPPING[route][i]
             spec_bait = SPEC_BAIT[area]
             orola = OROLA_BAIT[area][TIME_LIST[(time_index + i) % 3]]
@@ -222,7 +223,8 @@ def get_bait(rawDate: datetime=datetime.now(tz=ZoneInfo("Asia/Taipei"))):
                     messages.append(f'       魚餌取得方式: {BAIT_SOURCE[orola["BAIT"]]}')
                 if "KING_BAIT" in orola and orola['KING_BAIT'] in BAIT_SOURCE:
                     messages.append(f'       魚餌取得方式: {BAIT_SOURCE[orola["KING_BAIT"]]}')
-            messages.append('=' * 28)
+
+        messages.append('=' * 28)
     
     return "\n".join(messages)
 
