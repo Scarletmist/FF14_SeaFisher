@@ -202,27 +202,27 @@ def get_bait(rawDate: datetime=datetime.now(tz=ZoneInfo("Asia/Taipei"))):
     for fish_route_time in (near_route_time, far_route_time):
         messages.append('=' * 28)
         if fish_route_time == near_route_time:
-            messages.append('(近海航線)')
+            messages.append('> **（近海航線）**')
         else:
-            messages.append('(遠洋航線)')
+            messages.append('> **（遠洋航線）**')
         route = fish_route_time[0]
         time = fish_route_time[1]
         time_index = TIME_LIST.index(time)
 
         for i in range(3):
-            messages.append('=' * 20)
+            messages.append('> ' + '=' * 20)
             area = AREA_MAPPING[route][i]
             spec_bait = SPEC_BAIT[area]
             orola = OROLA_BAIT[area][TIME_LIST[(time_index + i) % 3]]
 
-            messages.append(f'釣場 No.{i + 1}, 釣餌: [ {BAIT_CHT[spec_bait]} ], !!!{COLOR_CHT[SPEC_COLOR[area]]}色')
-            messages.append(f'幻海釣餌: [ {BAIT_CHT[orola['BAIT']]} ]' + (', 以小釣大' if orola['MOOCH'] else ''))
+            messages.append(f'> 釣場 No.{i + 1}, 釣餌: [ {BAIT_CHT[spec_bait]} ], !!!{COLOR_CHT[SPEC_COLOR[area]]}色')
+            messages.append(f'> 幻海釣餌: [ {BAIT_CHT[orola['BAIT']]} ]' + (', 以小釣大' if orola['MOOCH'] else ''))
             if orola['KING']:
-                messages.append(f'    !!!幻海海王!!!' + (f', 釣餌: [ {BAIT_CHT[orola["KING_BAIT"]]} ]' if "KING_BAIT" in orola else '') + f', !!!{COLOR_CHT[orola["COLOR"]]}色')
+                messages.append(f'>     !!!幻海海王!!!' + (f', 釣餌: [ {BAIT_CHT[orola["KING_BAIT"]]} ]' if "KING_BAIT" in orola else '') + f', !!!{COLOR_CHT[orola["COLOR"]]}色')
                 if orola['BAIT'] in BAIT_SOURCE:
-                    messages.append(f'       魚餌取得方式: {BAIT_SOURCE[orola["BAIT"]]}')
+                    messages.append(f'>        魚餌取得方式: {BAIT_SOURCE[orola["BAIT"]]}')
                 if "KING_BAIT" in orola and orola['KING_BAIT'] in BAIT_SOURCE:
-                    messages.append(f'       魚餌取得方式: {BAIT_SOURCE[orola["KING_BAIT"]]}')
+                    messages.append(f'>        魚餌取得方式: {BAIT_SOURCE[orola["KING_BAIT"]]}')
 
         messages.append('=' * 28)
     
