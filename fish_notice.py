@@ -224,7 +224,7 @@ def get_bait(rawDate: datetime=datetime.now(tz=ZoneInfo("Asia/Taipei"))):
                 if "KING_BAIT" in orola and orola['KING_BAIT'] in BAIT_SOURCE:
                     messages.append(f'>        魚餌取得方式: {BAIT_SOURCE[orola["KING_BAIT"]]}')
 
-        messages.append('=' * 28)
+    messages.append('=' * 28)
     
     return "\n".join(messages)
 
